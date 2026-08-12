@@ -1,0 +1,23 @@
+{
+  "name": "prototype-laboratory",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "seed": "node server/scripts/seed.js",
+    "smoke": "node server/scripts/smoke.js && node server/scripts/smoke-export.js"
+  },
+  "dependencies": {
+    "@cursor/sdk": "^1.0.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "multer": "^2.2.0",
+    "three": "^0.172.0",
+    "uuid": "^11.0.5"
+  }
+}

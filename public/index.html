@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Prototype Laboratory</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Syne:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <section id="start" class="screen screen--start" data-screen="start">
+        <header class="start-brand">
+          <p class="eyebrow">Operate</p>
+          <h1>Prototype<br />Laboratory</h1>
+          <p class="lede">
+            Read a V57 TDD. Generate a playable graybox. Tune feel. Sync the document Unity will ship from.
+          </p>
+        </header>
+
+        <div class="workbench">
+          <div class="workbench__col">
+            <label class="field-label" for="tddSelect">TDD</label>
+            <select id="tddSelect"></select>
+            <ul id="mechanicList" class="mech-list"></ul>
+            <div class="row gap">
+              <label class="file-btn">
+                Import TDD
+                <input id="tddImport" type="file" accept=".md,text/markdown" hidden />
+              </label>
+              <button type="button" id="cleanBtn" class="btn btn--ghost">Clean project</button>
+            </div>
+          </div>
+
+          <div class="workbench__col">
+            <label class="field-label" for="providerSelect">Agent provider</label>
+            <select id="providerSelect"></select>
+            <label class="field-label" for="modelSelect" style="margin-top: 0.85rem">Model</label>
+            <div class="row gap" style="align-items: stretch">
+              <select id="modelSelect" style="flex: 1"></select>
+              <input id="modelCustom" type="text" placeholder="custom id" style="flex: 1" hidden />
+            </div>
+            <p id="providerHint" class="hint"></p>
+            <p id="providerError" class="hint hint--danger" hidden></p>
+            <button type="button" id="generateBtn" class="btn btn--primary btn--xl">
+              Generate Final
+            </button>
+            <button type="button" id="continueBtn" class="btn btn--ghost btn--xl" hidden>
+              Continue playable
+            </button>
+            <button type="button" id="exportBtn" class="btn btn--ghost btn--xl" hidden>
+              Export playable
+            </button>
+            <p class="hint">Builds the full playable loop from every §B mechanic, then opens Play. Requires an API key in .env.</p>
+          </div>
+        </div>
+
+        <pre id="startLog" class="log" hidden></pre>
+      </section>
+
+      <section id="play" class="screen screen--play" data-screen="play" hidden>
+        <canvas id="gameCanvas"></canvas>
+        <div id="hudRoot" class="hud-root"></div>
+
+        <div class="play-chrome" data-plab-ui>
+          <button type="button" id="skyBtn" class="icon-btn" title="Day / night" aria-label="Toggle day night">
+            <span id="skyIcon"></span>
+          </button>
+          <button type="button" id="chatToggle" class="btn btn--ghost btn--sm">Chat</button>
+          <button type="button" id="syncBtn" class="btn btn--accent btn--sm">Sync TDD</button>
+          <button type="button" id="exportPlayBtn" class="btn btn--ghost btn--sm" hidden>Export</button>
+          <button type="button" id="reloadBtn" class="btn btn--ghost btn--sm">Reload</button>
+        </div>
+
+        <aside id="chatDrawer" class="chat-drawer" data-plab-ui hidden>
+          <header class="chat-drawer__head">
+            <strong>Iterate</strong>
+            <button type="button" id="chatClose" class="btn btn--ghost btn--sm">Close</button>
+          </header>
+          <div id="chatLog" class="chat-log"></div>
+          <form id="chatForm" class="chat-form">
+            <input id="chatInput" type="text" placeholder="Tune speed, jump, timer…" autocomplete="off" />
+            <button type="submit" class="btn btn--primary btn--sm">Send</button>
+          </form>
+        </aside>
+
+        <div id="playStatus" class="play-status" hidden></div>
+      </section>
+
+      <div id="workOverlay" class="work-overlay" data-plab-ui hidden aria-live="polite">
+        <div class="work-card">
+          <p id="workEyebrow" class="work-card__eyebrow">Working</p>
+          <h2 id="workTitle" class="work-card__title">Processing…</h2>
+          <p id="workStatus" class="work-card__status">Starting…</p>
+          <p id="workElapsed" class="work-card__elapsed">0.0s</p>
+          <ul id="workLog" class="work-log"></ul>
+          <div class="row end">
+            <button id="workStopBtn" class="btn btn--danger" type="button">Stop</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
