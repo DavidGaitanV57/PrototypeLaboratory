@@ -11,6 +11,11 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  assertSafeSlug,
+  isInsideDir,
+  resolveExportDestination,
+} from "./security/paths.js";
 
 const SKIP_DIR_NAMES = new Set(["node_modules"]);
 
@@ -160,8 +165,14 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url || "/", \`http://\${req.headers.host || "127.0.0.1"}\`);
   let rel = decodeURIComponent(url.pathname);
   if (rel === "/") rel = "/index.html";
-  const file = path.normalize(path.join(root, rel));
-  if (!file.startsWith(root)) {
+  if (rel.includes("\\0")) {
+    res.writeHead(400);
+    res.end("Bad request");
+    return;
+  }
+  const rootAbs = path.resolve(root);
+  const file = path.resolve(rootAbs, "." + rel.replace(/\\\\/g, "/"));
+  if (file !== rootAbs && !file.startsWith(rootAbs + path.sep)) {
     res.writeHead(403);
     res.end("Forbidden");
     return;
@@ -169,7 +180,7 @@ const server = http.createServer((req, res) => {
   fs.readFile(file, (err, data) => {
     if (err) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-      res.end("Not found: " + rel);
+      res.end("Not found");
       return;
     }
     res.writeHead(200, { "Content-Type": TYPES[path.extname(file)] || "application/octet-stream" });
@@ -231,15 +242,42 @@ async function copyThreeBuild({ dest, root }) {
  * @param {string} args.tddsRoot
  * @param {string} args.slug
  * @param {string} [args.destination]
+ * @param {boolean} [args.allowOutsideExports] — tests only; never wire to HTTP
  */
-export async function exportBuild({ root, publicRoot, tddsRoot, slug, destination }) {
-  const cleanSlug = sanitizeSlug(slug);
+export async function exportBuild({
+  root,
+  publicRoot,
+  tddsRoot,
+  slug,
+  destination,
+  allowOutsideExports = false,
+}) {
+  let cleanSlug;
+  try {
+    cleanSlug = assertSafeSlug(sanitizeSlug(slug));
+  } catch {
+    return { ok: false, reason: "Invalid slug" };
+  }
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const dest = destination
-    ? path.isAbsolute(destination)
-      ? destination
-      : path.resolve(root, destination)
-    : path.join(root, "exports", `${cleanSlug}-${stamp}`);
+
+  let dest;
+  if (allowOutsideExports && destination) {
+    dest = path.isAbsolute(destination) ? path.resolve(destination) : path.resolve(root, destination);
+  } else {
+    const resolved = resolveExportDestination(root, destination, { slug: cleanSlug, stamp });
+    if (!resolved.ok) return resolved;
+    dest = resolved.dest;
+  }
+
+  // Extra belt: never write into public/, server/, or docs/ via export
+  const rootAbs = path.resolve(root);
+  if (!allowOutsideExports) {
+    for (const blocked of ["public", "server", "docs", "node_modules"]) {
+      if (isInsideDir(path.join(rootAbs, blocked), dest)) {
+        return { ok: false, reason: `Export destination cannot target ${blocked}/` };
+      }
+    }
+  }
 
   const entrySrc = path.join(publicRoot, "gameplay", "main.js");
   try {
@@ -272,7 +310,7 @@ export async function exportBuild({ root, publicRoot, tddsRoot, slug, destinatio
   await copyDir(path.join(publicRoot, "runtime"), path.join(dest, "runtime"));
   await copyDir(path.join(publicRoot, "gameplay"), path.join(dest, "gameplay"));
 
-  const tddDir = path.join(tddsRoot, slug);
+  const tddDir = path.join(tddsRoot, cleanSlug);
   const tddOutDir = path.join(dest, "tdd");
   await fs.mkdir(tddOutDir, { recursive: true });
   try {

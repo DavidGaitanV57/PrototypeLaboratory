@@ -51,6 +51,7 @@ const result = await exportBuild({
   tddsRoot: path.join(tmp, "docs", "tdds"),
   slug: "CoinRush",
   destination: dest,
+  allowOutsideExports: true,
 });
 
 if (!result.ok) fail(result.reason || "export failed");

@@ -1,6 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { assertAgentWriteAllowed } from "../writePolicy.js";
+import {
+  canonicalizeRel,
+  isSensitiveRel,
+  resolveWithinRoot,
+} from "../../security/paths.js";
 
 /**
  * OpenAI-compatible tool-calling provider.
@@ -59,15 +64,19 @@ export function createLlmProvider({
   ];
 
   async function execTool(name, args) {
-    const rel = String(args.path || "").replace(/\\/g, "/");
-    const abs = path.join(root, rel);
-    if (!abs.startsWith(root)) throw new Error("Path escapes root");
+    const rel = canonicalizeRel(args.path || "");
+    const abs = resolveWithinRoot(root, rel);
 
     if (name === "list_dir") {
+      if (isSensitiveRel(rel)) throw new Error("Access denied");
       const ents = await fs.readdir(abs, { withFileTypes: true });
-      return ents.map((e) => (e.isDirectory() ? `${e.name}/` : e.name)).join("\n");
+      return ents
+        .filter((e) => !isSensitiveRel(`${rel}/${e.name}`))
+        .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
+        .join("\n");
     }
     if (name === "read_file") {
+      if (isSensitiveRel(rel)) throw new Error("Access denied to sensitive file");
       return await fs.readFile(abs, "utf8");
     }
     if (name === "write_file") {

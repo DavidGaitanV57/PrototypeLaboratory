@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { assertSafeSlug, SAFE_SLUG_RE } from "../security/paths.js";
 
 export function parseMechanics(markdown) {
   const lines = String(markdown || "").split(/\r?\n/);
@@ -56,12 +57,12 @@ export async function listTdds(tddsRoot) {
   const out = [];
   for (const ent of entries) {
     if (!ent.isDirectory()) continue;
+    if (!SAFE_SLUG_RE.test(ent.name)) continue;
     const tddPath = path.join(tddsRoot, ent.name, "TDD.md");
     try {
       const text = await fs.readFile(tddPath, "utf8");
       out.push({
         slug: ent.name,
-        path: tddPath,
         projectName: parseProjectName(text),
         mechanics: parseMechanics(text).map((m) => ({ id: m.id, title: m.title, type: m.type })),
       });
@@ -73,10 +74,11 @@ export async function listTdds(tddsRoot) {
 }
 
 export async function readTdd(tddsRoot, slug) {
-  const tddPath = path.join(tddsRoot, slug, "TDD.md");
+  const safe = assertSafeSlug(slug);
+  const tddPath = path.join(tddsRoot, safe, "TDD.md");
   const text = await fs.readFile(tddPath, "utf8");
   return {
-    slug,
+    slug: safe,
     path: tddPath,
     text,
     projectName: parseProjectName(text),
@@ -85,13 +87,17 @@ export async function readTdd(tddsRoot, slug) {
 }
 
 export async function importTddUpload(tddsRoot, filename, buffer) {
-  const base = path.basename(filename, path.extname(filename)).replace(/[^\w-]+/g, "") || "Imported";
-  let slug = base;
+  const base =
+    path
+      .basename(filename, path.extname(filename))
+      .replace(/[^A-Za-z0-9_-]+/g, "")
+      .slice(0, 80) || "Imported";
+  let slug = assertSafeSlug(base);
   let i = 1;
   while (true) {
     try {
       await fs.access(path.join(tddsRoot, slug));
-      slug = `${base}${i++}`;
+      slug = assertSafeSlug(`${base}${i++}`.slice(0, 80));
     } catch {
       break;
     }

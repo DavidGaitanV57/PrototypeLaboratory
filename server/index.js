@@ -14,6 +14,7 @@ import {
   setActiveProvider,
   getActiveProvider,
 } from "./agent/providers/catalog.js";
+import { assertSafeSlug } from "./security/paths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -22,13 +23,42 @@ const TDDS = path.join(ROOT, "docs", "tdds");
 const SESSIONS = path.join(ROOT, "sessions");
 const GAMEPLAY = path.join(PUBLIC, "gameplay");
 const PORT = Number(process.env.PORT || 3850);
+const HOST = process.env.HOST || "127.0.0.1";
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter(_req, file, cb) {
+    const name = String(file.originalname || "").toLowerCase();
+    if (!name.endsWith(".md") && file.mimetype !== "text/markdown" && file.mimetype !== "text/plain") {
+      cb(new Error("Only Markdown (.md) uploads are allowed"));
+      return;
+    }
+    cb(null, true);
+  },
+});
 const sessions = new Map();
 const reloadClients = new Set();
 
 const app = express();
+app.disable("x-powered-by");
 app.use(express.json({ limit: "2mb" }));
+
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+  next();
+});
+
+function parseSlug(raw) {
+  try {
+    return assertSafeSlug(raw);
+  } catch {
+    return null;
+  }
+}
 
 // Vendor three from node_modules
 app.use(
@@ -89,8 +119,10 @@ app.get("/api/tdds", async (_req, res) => {
 });
 
 app.get("/api/tdds/:slug", async (req, res) => {
+  const slug = parseSlug(req.params.slug);
+  if (!slug) return res.status(400).json({ error: "Invalid slug" });
   try {
-    const tdd = await readTdd(TDDS, req.params.slug);
+    const tdd = await readTdd(TDDS, slug);
     res.json({
       slug: tdd.slug,
       projectName: tdd.projectName,
@@ -111,7 +143,7 @@ app.post("/api/tdds/import", upload.single("file"), async (req, res) => {
       mechanics: tdd.mechanics.map((m) => ({ id: m.id, title: m.title })),
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ error: err.message });
   }
 });
 
@@ -145,7 +177,7 @@ app.get("/api/events", (req, res) => {
 
 app.post("/api/sessions/resume", async (req, res) => {
   try {
-    const slug = req.body?.slug;
+    const slug = parseSlug(req.body?.slug);
     if (!slug) return res.status(400).json({ error: "slug required" });
     await fs.access(path.join(GAMEPLAY, "main.js"));
     const sessionId = randomUUID();
@@ -158,7 +190,7 @@ app.post("/api/sessions/resume", async (req, res) => {
 });
 
 app.post("/api/sessions/generate-final", async (req, res) => {
-  const slug = req.body?.slug;
+  const slug = parseSlug(req.body?.slug);
   if (!slug) return res.status(400).json({ error: "slug required" });
 
   const send = sseInit(res);
@@ -194,6 +226,7 @@ app.post("/api/sessions/:id/chat", async (req, res) => {
   try {
     const message = String(req.body?.message || "").trim();
     if (!message) throw new Error("message required");
+    if (message.length > 20000) throw new Error("message too long");
     await session.chat(message, { onEvent: (ev) => send(ev) });
     broadcastReload("chat");
     send({ type: "done" });
@@ -212,8 +245,8 @@ app.post("/api/sessions/:id/sync-tdd", async (req, res) => {
     return res.end();
   }
   try {
-    const summary = String(req.body?.summary || "").trim();
-    const chatDigest = String(req.body?.chatDigest || "").trim();
+    const summary = String(req.body?.summary || "").trim().slice(0, 8000);
+    const chatDigest = String(req.body?.chatDigest || "").trim().slice(0, 20000);
     const result = await session.syncTdd({ summary, chatDigest }, {
       onEvent: (ev) => send(ev),
     });
@@ -257,14 +290,15 @@ app.get("/api/gameplay/status", async (_req, res) => {
 
 app.post("/api/tdds/:slug/export", async (req, res) => {
   try {
-    const slug = req.params.slug;
+    const slug = parseSlug(req.params.slug);
+    if (!slug) return res.status(400).json({ error: "Invalid slug" });
     const destination = req.body?.destination;
     const result = await exportBuild({
       root: ROOT,
       publicRoot: PUBLIC,
       tddsRoot: TDDS,
       slug,
-      destination,
+      destination: destination ? String(destination) : undefined,
     });
     if (!result.ok) return res.status(400).json({ error: result.reason });
     res.json(result);
@@ -276,6 +310,7 @@ app.post("/api/tdds/:slug/export", async (req, res) => {
 await fs.mkdir(TDDS, { recursive: true });
 await fs.mkdir(SESSIONS, { recursive: true });
 await fs.mkdir(GAMEPLAY, { recursive: true });
+await fs.mkdir(path.join(ROOT, "exports"), { recursive: true });
 await initProviderCatalog(ROOT);
 
 const bootProviders = providerStatus();
@@ -288,6 +323,6 @@ if (!bootProviders.configured) {
   console.log(`[agent] ${a.label} · model ${a.model}`);
 }
 
-app.listen(PORT, () => {
-  console.log(`Prototype Laboratory → http://127.0.0.1:${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`Prototype Laboratory → http://${HOST}:${PORT}`);
 });

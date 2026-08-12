@@ -1,3 +1,5 @@
+import { canonicalizeRel } from "../security/paths.js";
+
 const KERNEL_PREFIXES = [
   "public/runtime/",
   "public/index.html",
@@ -28,9 +30,14 @@ export function isKernelPath(rel) {
  * @param {{ slug?: string }} [opts]
  */
 export function assertAgentWriteAllowed(rel, mode = "generate", opts = {}) {
-  const r = normalizeRel(rel);
+  // Collapse .. segments so public/gameplay/../../server/x cannot bypass checks
+  const r = canonicalizeRel(rel);
   if (mode === "sync") {
-    const ok = new RegExp(`^docs/tdds/${opts.slug || "[^/]+"}/TDD\\.md$`).test(r);
+    const slug = opts.slug || "";
+    if (!slug || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(slug)) {
+      throw new Error("Sync requires a valid slug");
+    }
+    const ok = r === `docs/tdds/${slug}/TDD.md`;
     if (!ok) throw new Error(`Sync may only write docs/tdds/<slug>/TDD.md (got ${r})`);
     return;
   }

@@ -334,11 +334,16 @@ async function loadTdds(selectSlug) {
 
 function renderMechanics() {
   const t = tdds.find((x) => x.slug === tddSelect.value);
-  mechanicList.innerHTML = "";
+  mechanicList.replaceChildren();
   if (!t) return;
   for (const m of t.mechanics || []) {
     const li = document.createElement("li");
-    li.innerHTML = `<div>${m.title || m.id}</div><div class="id">${m.id}${m.type ? " · " + m.type : ""}</div>`;
+    const title = document.createElement("div");
+    title.textContent = m.title || m.id || "";
+    const idLine = document.createElement("div");
+    idLine.className = "id";
+    idLine.textContent = m.type ? `${m.id} · ${m.type}` : String(m.id || "");
+    li.append(title, idLine);
     mechanicList.appendChild(li);
   }
 }
@@ -511,11 +516,16 @@ async function runExportBuild() {
   const suggested = `exports/${slug}-${stamp}`;
   let destination = null;
   try {
-    destination = window.prompt("Export destination (leave blank for default):", suggested);
+    destination = window.prompt(
+      "Export path under exports/ (leave blank for default):",
+      suggested,
+    );
   } catch {
     destination = null;
   }
   if (destination === null) return;
+  destination = String(destination).trim();
+  if (!destination) destination = "";
 
   showWorkOverlay({
     title: "Export playable",

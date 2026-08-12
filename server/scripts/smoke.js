@@ -10,6 +10,13 @@ import {
   providerStatus,
   requireActiveProvider,
 } from "../agent/providers/catalog.js";
+import {
+  assertSafeSlug,
+  canonicalizeRel,
+  isSensitiveRel,
+  resolveExportDestination,
+  resolveWithinRoot,
+} from "../security/paths.js";
 import "dotenv/config";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -38,11 +45,49 @@ try {
   ok("writePolicy blocks runtime");
 }
 try {
+  assertAgentWriteAllowed("public/gameplay/../../server/index.js", "generate");
+  fail("path traversal write should be blocked");
+} catch {
+  ok("writePolicy blocks gameplay/../ traversal");
+}
+try {
   assertAgentWriteAllowed("docs/tdds/CoinRush/TDD.md", "sync", { slug: "CoinRush" });
   ok("writePolicy sync TDD");
 } catch (e) {
   fail(e.message);
 }
+
+try {
+  assertSafeSlug("../etc");
+  fail("unsafe slug should throw");
+} catch {
+  ok("assertSafeSlug rejects traversal");
+}
+try {
+  canonicalizeRel("../../../etc/passwd");
+  fail("canonicalize should reject escape");
+} catch {
+  ok("canonicalizeRel rejects .. escape");
+}
+if (canonicalizeRel("public/gameplay/../../.env") === ".env") {
+  ok("canonicalizeRel collapses traversal inside root");
+} else {
+  fail("canonicalizeRel should collapse to .env");
+}
+if (isSensitiveRel(".env")) ok("isSensitiveRel .env");
+else fail("isSensitiveRel missed .env");
+try {
+  resolveWithinRoot(ROOT, "docs/tdds/CoinRush/TDD.md");
+  ok("resolveWithinRoot ok path");
+} catch (e) {
+  fail(e.message);
+}
+const blockedExport = resolveExportDestination(ROOT, path.join(ROOT, "..", "outside-export"), {
+  slug: "CoinRush",
+  stamp: "t",
+});
+if (!blockedExport.ok) ok("export destination confined to exports/");
+else fail("export should reject outside exports/");
 
 let text = "";
 try {
