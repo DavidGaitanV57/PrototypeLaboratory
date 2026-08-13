@@ -23,11 +23,38 @@ const chatClose = document.getElementById("chatClose");
 const chatLog = document.getElementById("chatLog");
 const chatForm = document.getElementById("chatForm");
 const chatInput = document.getElementById("chatInput");
+const chatProviderSelect = document.getElementById("chatProviderSelect");
+const chatModelSelect = document.getElementById("chatModelSelect");
+const chatModelCustom = document.getElementById("chatModelCustom");
+const chatModeAgent = document.getElementById("chatModeAgent");
+const chatModeAsk = document.getElementById("chatModeAsk");
+const chatModeTrigger = document.getElementById("chatModeTrigger");
+const chatModeTriggerText = document.getElementById("chatModeTriggerText");
+const chatModePopover = document.getElementById("chatModePopover");
+const chatModeBlurb = document.getElementById("chatModeBlurb");
+const startPicker = document.getElementById("startPicker");
+const startPickerTrigger = document.getElementById("startPickerTrigger");
+const startPickerTriggerText = document.getElementById("startPickerTriggerText");
+const startPickerPopover = document.getElementById("startPickerPopover");
+const startPickerBlurb = document.getElementById("startPickerBlurb");
+const chatPicker = document.getElementById("chatPicker");
+const chatPickerTrigger = document.getElementById("chatPickerTrigger");
+const chatPickerTriggerText = document.getElementById("chatPickerTriggerText");
+const chatPickerPopover = document.getElementById("chatPickerPopover");
+const chatPickerBlurb = document.getElementById("chatPickerBlurb");
 const syncBtn = document.getElementById("syncBtn");
 const exportPlayBtn = document.getElementById("exportPlayBtn");
 const reloadBtn = document.getElementById("reloadBtn");
 const playStatus = document.getElementById("playStatus");
 const workOverlay = document.getElementById("workOverlay");
+const benchmarkBtn = document.getElementById("benchmarkBtn");
+const benchmarkOverlay = document.getElementById("benchmarkOverlay");
+const benchmarkClose = document.getElementById("benchmarkClose");
+const benchmarkClearBtn = document.getElementById("benchmarkClearBtn");
+const benchmarkEmpty = document.getElementById("benchmarkEmpty");
+const benchmarkBody = document.getElementById("benchmarkBody");
+const benchmarkStats = document.getElementById("benchmarkStats");
+const benchmarkHistory = document.getElementById("benchmarkHistory");
 const workEyebrow = document.getElementById("workEyebrow");
 const workTitle = document.getElementById("workTitle");
 const workStatus = document.getElementById("workStatus");
@@ -47,9 +74,13 @@ let activeWorkController = null;
 let workTimer = null;
 let workStartedAt = 0;
 let lastWorkLogLine = "";
+/** @type {"agent" | "ask"} */
+let chatMode = "agent";
+const CHAT_MODE_KEY = "plab.chatMode";
+const PLAYABLE_RESUME_KEY = "plab.resumePlayable";
 
 function updateGameInputBlock() {
-  const block = !chatDrawer.hidden || !workOverlay.hidden;
+  const block = !chatDrawer.hidden || !workOverlay.hidden || !benchmarkOverlay.hidden;
   document.body.dataset.plabGameInput = block ? "blocked" : "allowed";
   if (block) window.dispatchEvent(new CustomEvent("plab:input-block"));
 }
@@ -104,8 +135,176 @@ function describeAgentStep(ev) {
   if (ev.type === "error" && ev.message) return ev.message;
   if (ev.type === "synced") return `Synced${ev.version ? ` v${ev.version}` : ""}`;
   if (ev.type === "ready") return "Playable ready";
+  if (ev.type === "benchmark") {
+    const dur = formatDurationMs(ev.durationMs);
+    if (ev.status === "error") {
+      const err = ev.errorMessage ? String(ev.errorMessage).slice(0, 160) : "error";
+      return `Benchmark · FAILED · ${dur} · ${err}`;
+    }
+    const tok = ev.tokensKnown
+      ? `${formatTokenCount(ev.totalTokens)} tok`
+      : "tokens n/a";
+    return `Benchmark · ${ev.status || "done"} · ${dur} · ${tok}`;
+  }
+  if (ev.type === "advice") {
+    const warns = (ev.advice || []).filter((a) => a.severity === "warn").length;
+    if (warns) return `Soft check · ${warns} hint(s) (play still opens)`;
+    return "Soft check · OK";
+  }
   if (ev.type === "done") return "Done";
   return null;
+}
+
+function formatDurationMs(ms) {
+  const s = Math.max(0, Number(ms) || 0) / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  const rem = s - m * 60;
+  return `${m}m ${rem.toFixed(0)}s`;
+}
+
+function formatTokenCount(n) {
+  const v = Math.round(Number(n) || 0);
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
+  if (v >= 10_000) return `${(v / 1000).toFixed(1)}k`;
+  return String(v);
+}
+
+function opLabel(op) {
+  if (op === "generate") return "Generate";
+  if (op === "chat") return "Chat";
+  if (op === "ask") return "Ask";
+  if (op === "sync") return "Sync";
+  return op || "Run";
+}
+
+function renderBenchmark(state) {
+  const last = state?.last;
+  const history = state?.history || [];
+  const hasData = Boolean(last) || history.length > 0;
+  if (benchmarkClearBtn) benchmarkClearBtn.disabled = !hasData;
+
+  if (!last) {
+    benchmarkEmpty.hidden = false;
+    benchmarkEmpty.textContent = "No agent runs yet";
+    benchmarkBody.hidden = true;
+    return;
+  }
+  benchmarkEmpty.hidden = true;
+  benchmarkBody.hidden = false;
+
+  const tokensValue = last.tokensKnown
+    ? `${formatTokenCount(last.totalTokens)} (in ${formatTokenCount(last.promptTokens)} / out ${formatTokenCount(last.completionTokens)})`
+    : "Not reported by provider";
+
+  const rows = [
+    ["Operation", opLabel(last.op)],
+    ["Status", last.status || "—"],
+    ["Provider", last.providerLabel || last.providerId || last.provider || "—"],
+    ["Model", last.model || "—"],
+    ["Duration", formatDurationMs(last.durationMs)],
+    ["Tokens", tokensValue],
+    ["Turns", String(last.turns ?? 0)],
+    ["Tool calls", String(last.toolCalls ?? 0)],
+    ["Files written", String(last.filesWritten ?? 0)],
+    ["TDD", last.slug || "—"],
+  ];
+  if (last.errorMessage) {
+    rows.push(["Error", last.errorMessage]);
+  }
+
+  benchmarkStats.innerHTML = rows
+    .map(([k, v]) => {
+      const text = String(v);
+      const danger = k === "Status" && last.status === "error" || k === "Error";
+      return `<div${danger ? ' class="benchmark__stat--danger"' : ""}><dt>${k}</dt><dd title="${text.replace(/"/g, "&quot;")}">${text}</dd></div>`;
+    })
+    .join("");
+
+  benchmarkHistory.innerHTML = history
+    .slice(0, 8)
+    .map((h) => {
+      const tok = h.tokensKnown ? `${formatTokenCount(h.totalTokens)} tok` : "tok n/a";
+      const st = h.status === "error" ? "FAIL" : h.status === "max_turns" ? "MAX" : "OK";
+      const tip = h.errorMessage || h.model || "";
+      return `<li title="${String(tip).replace(/"/g, "&quot;")}">
+        <span class="op">${opLabel(h.op)}</span>
+        <span class="meta">${st} · ${h.providerLabel || h.providerId || ""} · ${h.model || "—"} · ${h.slug || ""}</span>
+        <span class="nums">${formatDurationMs(h.durationMs)} · ${tok}</span>
+      </li>`;
+    })
+    .join("");
+}
+
+function setBenchmarkOpen(open) {
+  if (!benchmarkOverlay) return;
+  benchmarkOverlay.hidden = !open;
+  updateGameInputBlock();
+  if (open) renderBenchmark(window.__plabBenchmark || { last: null, history: [] });
+}
+
+async function clearBenchmarkData() {
+  try {
+    const res = await fetch("/api/benchmark", { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || res.statusText);
+    }
+  } catch (err) {
+    alert(err.message || err);
+    return;
+  }
+  const empty = { last: null, history: [] };
+  window.__plabBenchmark = empty;
+  try {
+    localStorage.removeItem("plab.benchmark");
+  } catch {
+    /* */
+  }
+  renderBenchmark(empty);
+}
+
+function applyBenchmarkEvent(ev) {
+  const row = { ...ev };
+  delete row.type;
+  const prev = window.__plabBenchmark || { last: null, history: [] };
+  const history = [row, ...(prev.history || []).filter((h) => h.at !== row.at)].slice(0, 12);
+  const next = { last: row, history };
+  window.__plabBenchmark = next;
+  try {
+    localStorage.setItem("plab.benchmark", JSON.stringify(next));
+  } catch {
+    /* */
+  }
+  renderBenchmark(next);
+}
+
+async function loadBenchmark() {
+  try {
+    const res = await fetch("/api/benchmark");
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.last) {
+        window.__plabBenchmark = data;
+        renderBenchmark(data);
+        return;
+      }
+    }
+  } catch {
+    /* */
+  }
+  try {
+    const raw = localStorage.getItem("plab.benchmark");
+    if (raw) {
+      const data = JSON.parse(raw);
+      window.__plabBenchmark = data;
+      renderBenchmark(data);
+      return;
+    }
+  } catch {
+    /* */
+  }
+  renderBenchmark({ last: null, history: [] });
 }
 
 function showScreen(name) {
@@ -120,6 +319,7 @@ function setChatOpen(open) {
   chatToggle.setAttribute("aria-expanded", open ? "true" : "false");
   updateGameInputBlock();
   if (open) {
+    syncChatProviderControls();
     requestAnimationFrame(() => chatInput?.focus?.());
   } else if (!playEl.hidden) {
     requestAnimationFrame(() => canvas?.focus?.());
@@ -137,25 +337,84 @@ function setPlayStatus(text, show = true) {
   playStatus.textContent = text || "";
 }
 
-function appendChat(role, text) {
+function appendChat(role, text, { mode } = {}) {
   if (!text) return;
   const div = document.createElement("div");
   div.className = `chat-msg chat-msg--${role}`;
-  div.textContent = text;
+  if (mode === "ask" || mode === "agent") {
+    div.dataset.mode = mode;
+    const mark = document.createElement("span");
+    mark.className = `chat-msg__mark chat-msg__mark--${mode}`;
+    mark.title = mode === "ask" ? "Ask" : "Agent";
+    mark.setAttribute("aria-label", mode === "ask" ? "Ask" : "Agent");
+    div.appendChild(mark);
+  }
+  const body = document.createElement("span");
+  body.className = "chat-msg__text";
+  body.textContent = text;
+  div.appendChild(body);
   chatLog.appendChild(div);
   chatLog.scrollTop = chatLog.scrollHeight;
 }
 
-function createChatRunCollector() {
+function serializeChatLog() {
+  return [...chatLog.querySelectorAll(".chat-msg")].map((el) => {
+    const role = el.classList.contains("chat-msg--user")
+      ? "user"
+      : el.classList.contains("chat-msg--assistant")
+        ? "assistant"
+        : "sys";
+    return {
+      role,
+      text: el.querySelector(".chat-msg__text")?.textContent || el.textContent || "",
+      mode: el.dataset.mode || undefined,
+    };
+  });
+}
+
+function restoreChatLog(entries) {
+  chatLog.replaceChildren();
+  for (const entry of entries || []) {
+    if (!entry?.text) continue;
+    appendChat(entry.role || "sys", entry.text, { mode: entry.mode });
+  }
+}
+
+function stripModeEcho(text) {
+  return String(text || "")
+    .replace(/^\s*\[(Agent|Ask)\]\s*/i, "")
+    .replace(/^\s*(Agent|Ask)\s*:\s*/i, "")
+    .trim();
+}
+
+function createChatRunCollector(userMessage = "") {
   const assistantChunks = [];
   const writtenFiles = new Set();
+  let hadError = false;
+  let errorMessage = "";
+  let mode = "agent";
+  const userNorm = stripModeEcho(userMessage).toLowerCase();
+
+  function isUserEcho(text) {
+    const t = stripModeEcho(text);
+    if (!t) return true;
+    if (/^\[(Agent|Ask)\]/i.test(String(text || "").trim())) return true;
+    const norm = t.toLowerCase();
+    if (userNorm && (norm === userNorm || norm.startsWith(userNorm))) return true;
+    return false;
+  }
 
   return {
     ingest(ev) {
       if (!ev) return;
+      if (ev.type === "error" && ev.message) {
+        hadError = true;
+        errorMessage = String(ev.message);
+      }
+      if (ev.type === "done" && ev.mode) mode = ev.mode;
       if (ev.type === "assistant" && ev.text) {
         const t = sanitizeAgentText(ev.text);
-        if (t) assistantChunks.push(t);
+        if (t && !isUserEcho(t)) assistantChunks.push(t);
       }
       if (ev.type === "file" && ev.path) writtenFiles.add(shortPath(ev.path));
       if (
@@ -167,15 +426,28 @@ function createChatRunCollector() {
       }
     },
     buildReply() {
+      if (hadError) {
+        return errorMessage
+          ? `Request failed: ${errorMessage}`
+          : "Request failed — no gameplay changes were applied.";
+      }
       let text = "";
       for (let i = assistantChunks.length - 1; i >= 0; i--) {
-        const chunk = assistantChunks[i];
-        if (chunk.length >= 16) {
+        const chunk = stripModeEcho(assistantChunks[i]);
+        if (chunk.length >= 16 && !isUserEcho(chunk)) {
           text = chunk;
           break;
         }
       }
-      if (!text && assistantChunks.length) text = assistantChunks[assistantChunks.length - 1];
+      if (!text) {
+        for (let i = assistantChunks.length - 1; i >= 0; i--) {
+          const chunk = stripModeEcho(assistantChunks[i]);
+          if (chunk && !isUserEcho(chunk)) {
+            text = chunk;
+            break;
+          }
+        }
+      }
 
       const files = [...writtenFiles].filter(Boolean).sort();
       const parts = [];
@@ -185,9 +457,21 @@ function createChatRunCollector() {
         parts.push(files.length === 1 ? `File updated:\n${list}` : `Files updated:\n${list}`);
       }
       if (!parts.length) {
+        if (mode === "ask") {
+          return "Ask finished with no readable reply. Try again or switch provider/model.";
+        }
         return "Finished this turn — no gameplay files were written. Try rephrasing or be more specific.";
       }
       return parts.join("\n\n");
+    },
+    get hadError() {
+      return hadError;
+    },
+    get wroteFiles() {
+      return writtenFiles.size > 0;
+    },
+    get files() {
+      return [...writtenFiles];
     },
   };
 }
@@ -210,6 +494,7 @@ function showWorkOverlay({ title, eyebrow = "Working", status = "Starting…" } 
   workLog.innerHTML = "";
   lastWorkLogLine = "";
   workStopBtn.disabled = false;
+  workStopBtn.textContent = "Stop";
   workOverlay.hidden = false;
   updateGameInputBlock();
   workStartedAt = performance.now();
@@ -218,6 +503,22 @@ function showWorkOverlay({ title, eyebrow = "Working", status = "Starting…" } 
     const s = ((performance.now() - workStartedAt) / 1000).toFixed(1);
     workElapsed.textContent = `${s}s`;
   }, 100);
+}
+
+function showWorkFailure(message) {
+  const msg = String(message || "Failed").slice(0, 1200);
+  workEyebrow.textContent = "Failed";
+  setWorkStatus(msg);
+  appendWorkLog(msg);
+  logStart(msg);
+  workStopBtn.disabled = false;
+  workStopBtn.textContent = "Close";
+  workOverlay.hidden = false;
+  updateGameInputBlock();
+  if (workTimer) {
+    clearInterval(workTimer);
+    workTimer = null;
+  }
 }
 
 function setWorkStatus(message) {
@@ -300,6 +601,31 @@ async function readSSE(url, options, onEvent) {
 
 function handleWorkEvent(ev, { chat = false } = {}) {
   if (ev.type === "session" && ev.sessionId) sessionId = ev.sessionId;
+  if (ev.type === "benchmark") {
+    applyBenchmarkEvent(ev);
+    const summary = summarizeAgentEvent(ev);
+    if (summary) {
+      setWorkStatus(summary.text);
+      appendWorkLog(summary.text);
+    }
+    return;
+  }
+  if (ev.type === "advice") {
+    const digest = ev.digest || "";
+    const warns = (ev.advice || []).filter((a) => a.severity === "warn");
+    for (const w of warns.slice(0, 6)) {
+      appendWorkLog(`Hint: ${w.message}`);
+    }
+    if (digest && chat) appendChat("sys", digest);
+    else if (digest && !chat) {
+      // Surface after generate in chat drawer so operator isn't blind
+      appendChat("sys", digest);
+    }
+    if (warns.length) {
+      setWorkStatus(`Soft check · ${warns.length} hint(s) — playable still opens`);
+    }
+    return;
+  }
   const summary = summarizeAgentEvent(ev);
   if (!summary) return;
   if (summary.kind === "error") {
@@ -375,7 +701,24 @@ async function loadProviders() {
   }
   providerSelect.value = data.active || data.providers[0].id;
   fillModelSelect(data.model);
+  syncChatProviderControls();
   updateProviderHint();
+}
+
+function shortModelLabel(model) {
+  const m = String(model || "").trim();
+  if (!m || m === "auto") return "Auto";
+  if (m === "__custom__") return "Custom";
+  const leaf = m.includes("/") ? m.slice(m.lastIndexOf("/") + 1) : m;
+  return leaf.length > 24 ? `${leaf.slice(0, 22)}…` : leaf;
+}
+
+function providerBlurb(p) {
+  if (!p) return "Choose a provider and model.";
+  if (p.id === "cursor") {
+    return "Balanced quality and speed, recommended for most tasks";
+  }
+  return `${p.label} · OpenAI-compatible API. Switch anytime for Generate or Chat.`;
 }
 
 function currentProvider() {
@@ -410,11 +753,339 @@ function fillModelSelect(selectedModel) {
     modelSelect.value = models[0];
     modelCustom.hidden = true;
   }
+  refreshPickerUIs();
 }
 
 function selectedModelValue() {
   if (modelSelect.value === "__custom__") return modelCustom.value.trim();
   return modelSelect.value;
+}
+
+function selectedChatModelValue() {
+  if (!chatModelSelect) return selectedModelValue();
+  if (chatModelSelect.value === "__custom__") return chatModelCustom.value.trim();
+  return chatModelSelect.value;
+}
+
+function fillSelectModels(selectEl, customEl, providerId, selectedModel) {
+  const p = (providerState.providers || []).find((x) => x.id === providerId);
+  const models = [...(p?.suggestedModels || [])];
+  const current = selectedModel || p?.model || "";
+  if (current && !models.includes(current)) models.unshift(current);
+  selectEl.innerHTML = "";
+  for (const m of models) {
+    const opt = document.createElement("option");
+    opt.value = m;
+    opt.textContent = m === "auto" ? "auto (server picks)" : m;
+    selectEl.appendChild(opt);
+  }
+  const customOpt = document.createElement("option");
+  customOpt.value = "__custom__";
+  customOpt.textContent = "Custom…";
+  selectEl.appendChild(customOpt);
+
+  if (current && models.includes(current)) {
+    selectEl.value = current;
+    customEl.hidden = true;
+  } else if (current) {
+    selectEl.value = "__custom__";
+    customEl.hidden = false;
+    customEl.value = current;
+  } else if (models.length) {
+    selectEl.value = models[0];
+    customEl.hidden = true;
+  }
+}
+
+function syncChatProviderControls() {
+  if (!chatProviderSelect || !chatModelSelect) return;
+  chatProviderSelect.innerHTML = "";
+  for (const p of providerState.providers || []) {
+    const opt = document.createElement("option");
+    opt.value = p.id;
+    opt.textContent = p.label;
+    chatProviderSelect.appendChild(opt);
+  }
+  const active = providerSelect.value || providerState.active || providerState.providers?.[0]?.id;
+  if (active && [...chatProviderSelect.options].some((o) => o.value === active)) {
+    chatProviderSelect.value = active;
+  }
+  fillSelectModels(
+    chatModelSelect,
+    chatModelCustom,
+    chatProviderSelect.value,
+    selectedModelValue() || providerState.model,
+  );
+  refreshPickerUIs();
+}
+
+/** @type {ReturnType<typeof bindModelPicker>[]} */
+const modelPickers = [];
+
+function refreshPickerUIs() {
+  for (const p of modelPickers) p.refresh();
+}
+
+function closeAllModelPickers(except) {
+  closeChatModePicker();
+  for (const p of modelPickers) {
+    if (p !== except) p.close();
+  }
+}
+
+function isChatModePickerOpen() {
+  return !!(chatModePopover && !chatModePopover.hidden);
+}
+
+function closeChatModePicker() {
+  if (!chatModePopover || !chatModeTrigger) return;
+  chatModePopover.hidden = true;
+  chatModeTrigger.setAttribute("aria-expanded", "false");
+}
+
+function openChatModePicker() {
+  for (const p of modelPickers) p.close();
+  if (!chatModePopover || !chatModeTrigger) return;
+  chatModePopover.hidden = false;
+  chatModeTrigger.setAttribute("aria-expanded", "true");
+  if (chatModeBlurb) {
+    chatModeBlurb.textContent =
+      chatMode === "ask"
+        ? "Read-only diagnosis — no file writes this turn."
+        : "Edits gameplay files under public/gameplay.";
+  }
+}
+
+function bindModelPicker({
+  root,
+  trigger,
+  triggerText,
+  popover,
+  blurb,
+  providerEl,
+  modelEl,
+  customEl,
+}) {
+  if (!root || !trigger || !popover) {
+    return {
+      refresh() {},
+      close() {},
+      isOpen() {
+        return false;
+      },
+    };
+  }
+
+  const home = popover.querySelector(".model-picker__home");
+  const providerOpts = popover.querySelector('[data-options="provider"]');
+  const modelOpts = popover.querySelector('[data-options="model"]');
+  const customInput = popover.querySelector("[data-custom]");
+  let open = false;
+  let view = "home";
+
+  function setView(next) {
+    view = next;
+    if (home) home.hidden = next !== "home";
+    for (const panel of popover.querySelectorAll(".model-picker__panel")) {
+      panel.hidden = panel.dataset.panel !== next;
+    }
+    if (next === "provider") renderProviderOptions();
+    if (next === "model") renderModelOptions();
+  }
+
+  function currentModelDisplay() {
+    if (modelEl.value === "__custom__") return customEl.value.trim() || "Custom";
+    return modelEl.value || "Auto";
+  }
+
+  function refresh() {
+    const p = (providerState.providers || []).find((x) => x.id === providerEl.value);
+    const model = currentModelDisplay();
+    if (triggerText) triggerText.textContent = shortModelLabel(model);
+    if (blurb) blurb.textContent = providerBlurb(p);
+    for (const el of popover.querySelectorAll('[data-bind="provider"]')) {
+      el.textContent = p?.label || providerEl.value || "—";
+    }
+    for (const el of popover.querySelectorAll('[data-bind="model"]')) {
+      el.textContent = shortModelLabel(model);
+    }
+    if (customInput) {
+      const isCustom = modelEl.value === "__custom__";
+      customInput.hidden = !isCustom;
+      if (isCustom) customInput.value = customEl.value;
+    }
+  }
+
+  function close() {
+    open = false;
+    popover.hidden = true;
+    trigger.setAttribute("aria-expanded", "false");
+    setView("home");
+  }
+
+  function openPicker() {
+    closeAllModelPickers(api);
+    open = true;
+    popover.hidden = false;
+    trigger.setAttribute("aria-expanded", "true");
+    setView("home");
+    refresh();
+  }
+
+  function renderProviderOptions() {
+    if (!providerOpts) return;
+    providerOpts.innerHTML = "";
+    for (const p of providerState.providers || []) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "model-picker__option";
+      if (p.id === providerEl.value) btn.classList.add("is-active");
+      btn.textContent = p.label;
+      btn.addEventListener("click", async () => {
+        providerEl.value = p.id;
+        fillSelectModels(modelEl, customEl, p.id, p.model);
+        try {
+          await persistProviderSelectionFrom(p.id, selectedValue());
+        } catch {
+          /* shown */
+        }
+        refresh();
+        setView("home");
+      });
+      providerOpts.appendChild(btn);
+    }
+  }
+
+  function selectedValue() {
+    if (modelEl.value === "__custom__") return customEl.value.trim();
+    return modelEl.value;
+  }
+
+  function renderModelOptions() {
+    if (!modelOpts) return;
+    modelOpts.innerHTML = "";
+    const p = (providerState.providers || []).find((x) => x.id === providerEl.value);
+    const models = [...(p?.suggestedModels || [])];
+    const current = selectedValue();
+    if (current && !models.includes(current) && modelEl.value !== "__custom__") {
+      models.unshift(current);
+    }
+    for (const m of models) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "model-picker__option";
+      if (modelEl.value === m) btn.classList.add("is-active");
+      btn.textContent = m === "auto" ? "Auto" : m;
+      btn.addEventListener("click", async () => {
+        modelEl.value = m;
+        customEl.hidden = true;
+        if (customInput) customInput.hidden = true;
+        try {
+          await persistProviderSelectionFrom(providerEl.value, m);
+        } catch {
+          /* shown */
+        }
+        refresh();
+        setView("home");
+      });
+      modelOpts.appendChild(btn);
+    }
+    const customBtn = document.createElement("button");
+    customBtn.type = "button";
+    customBtn.className = "model-picker__option";
+    if (modelEl.value === "__custom__") customBtn.classList.add("is-active");
+    customBtn.textContent = "Custom…";
+    customBtn.addEventListener("click", () => {
+      modelEl.value = "__custom__";
+      customEl.hidden = false;
+      if (customInput) {
+        customInput.hidden = false;
+        customInput.value = customEl.value || "";
+        customInput.focus();
+      }
+      refresh();
+    });
+    modelOpts.appendChild(customBtn);
+    if (customInput) {
+      customInput.hidden = modelEl.value !== "__custom__";
+      if (modelEl.value === "__custom__") customInput.value = customEl.value;
+    }
+  }
+
+  async function commitCustom() {
+    if (!customInput || modelEl.value !== "__custom__") return;
+    const v = customInput.value.trim();
+    if (!v) return;
+    customEl.value = v;
+    try {
+      await persistProviderSelectionFrom(providerEl.value, v);
+    } catch {
+      /* shown */
+    }
+    refresh();
+  }
+
+  trigger.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (open) close();
+    else openPicker();
+  });
+
+  popover.addEventListener("click", (e) => e.stopPropagation());
+
+  for (const btn of popover.querySelectorAll("[data-goto]")) {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      setView(btn.getAttribute("data-goto") || "home");
+    });
+  }
+
+  customInput?.addEventListener("keydown", async (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      await commitCustom();
+      setView("home");
+    }
+  });
+  customInput?.addEventListener("change", commitCustom);
+  customInput?.addEventListener("blur", commitCustom);
+
+  const api = {
+    refresh,
+    close,
+    isOpen() {
+      return open;
+    },
+  };
+  return api;
+}
+
+function setChatMode(mode, { close = true } = {}) {
+  chatMode = mode === "ask" ? "ask" : "agent";
+  try {
+    localStorage.setItem(CHAT_MODE_KEY, chatMode);
+  } catch {
+    /* */
+  }
+  chatModeAgent?.classList.toggle("is-active", chatMode === "agent");
+  chatModeAsk?.classList.toggle("is-active", chatMode === "ask");
+  if (chatModeTriggerText) {
+    chatModeTriggerText.textContent = chatMode === "ask" ? "Ask" : "Agent";
+  }
+  if (chatModeBlurb) {
+    chatModeBlurb.textContent =
+      chatMode === "ask"
+        ? "Read-only diagnosis — no file writes this turn."
+        : "Edits gameplay files under public/gameplay.";
+  }
+  if (chatInput) {
+    chatInput.placeholder =
+      chatMode === "ask"
+        ? "Why are AI karts stuck on the first power-up?"
+        : "Tune speed, jump, timer, fix loop…";
+  }
+  if (close) closeChatModePicker();
 }
 
 function updateProviderHint() {
@@ -427,13 +1098,11 @@ function updateProviderHint() {
     providerHint.textContent =
       "Cursor SDK · pick model (auto lets Cursor choose). Requires CURSOR_API_KEY.";
   } else {
-    providerHint.textContent = `${p.label} · OpenAI-compatible tools. Model from .env or selector.`;
+    providerHint.textContent = "";
   }
 }
 
-async function persistProviderSelection() {
-  const id = providerSelect.value;
-  const model = selectedModelValue();
+async function persistProviderSelectionFrom(id, model) {
   if (!id || !model) return;
   const res = await fetch("/api/agent/provider", {
     method: "POST",
@@ -444,7 +1113,7 @@ async function persistProviderSelection() {
   if (!res.ok) {
     providerError.hidden = false;
     providerError.textContent = data.error || "Could not set provider";
-    return;
+    throw new Error(data.error || "Could not set provider");
   }
   providerError.hidden = true;
   providerState = {
@@ -453,7 +1122,23 @@ async function persistProviderSelection() {
     providers: data.providers || providerState.providers,
     configured: true,
   };
+  if (providerSelect && [...providerSelect.options].some((o) => o.value === id)) {
+    providerSelect.value = id;
+  }
+  fillModelSelect(model);
+  syncChatProviderControls();
   updateProviderHint();
+}
+
+async function persistProviderSelection() {
+  const id = providerSelect.value;
+  const model = selectedModelValue();
+  if (!id || !model) return;
+  try {
+    await persistProviderSelectionFrom(id, model);
+  } catch {
+    /* error already shown */
+  }
 }
 
 async function refreshContinueBtn() {
@@ -482,7 +1167,14 @@ function collectChatDigest(limit = 16) {
           : el.classList.contains("chat-msg--sys")
             ? "system"
             : "system";
-      const text = (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 320);
+      const text = (
+        el.querySelector(".chat-msg__text")?.textContent ||
+        el.textContent ||
+        ""
+      )
+        .trim()
+        .replace(/\s+/g, " ")
+        .slice(0, 320);
       return text ? `${role}: ${text}` : "";
     })
     .filter(Boolean)
@@ -566,7 +1258,17 @@ async function unmountGame() {
 async function mountGame() {
   await unmountGame();
   const bust = Date.now();
-  const mod = await import(`/gameplay/main.js?t=${bust}`);
+  let mod;
+  try {
+    mod = await import(`/gameplay/main.js?t=${bust}`);
+  } catch (err) {
+    throw new Error(
+      "Could not load /gameplay/main.js — Generate Final may have stopped before writing the entry file. Check Benchmark (max_turns) or run Generate again.",
+    );
+  }
+  if (typeof mod.mount !== "function") {
+    throw new Error("gameplay/main.js loaded but does not export mount()");
+  }
   gameModule = mod;
   await mod.mount(canvas, { hudRoot });
   syncSkyIcon();
@@ -602,20 +1304,121 @@ async function openPlayable({ slug, resume = false } = {}) {
   setPlayStatus("", false);
 }
 
+/** ES module siblings stay cached after soft remount — hard reload when Agent wrote files. */
+function schedulePlayableReload({ assistantReply, openChat = true } = {}) {
+  const messages = serializeChatLog();
+  if (assistantReply) {
+    messages.push({ role: "assistant", text: assistantReply });
+  }
+  messages.push({
+    role: "sys",
+    text: "Page reloaded so module changes apply. Continuing playable…",
+  });
+  const payload = {
+    slug: tddSelect.value || localStorage.getItem(LAST_SLUG_KEY),
+    sessionId,
+    chatMode,
+    openChat: openChat !== false,
+    messages,
+    at: Date.now(),
+  };
+  try {
+    sessionStorage.setItem(PLAYABLE_RESUME_KEY, JSON.stringify(payload));
+  } catch {
+    /* */
+  }
+  location.reload();
+}
+
+async function maybeResumeAfterReload() {
+  let raw;
+  try {
+    raw = sessionStorage.getItem(PLAYABLE_RESUME_KEY);
+  } catch {
+    return false;
+  }
+  if (!raw) return false;
+  try {
+    sessionStorage.removeItem(PLAYABLE_RESUME_KEY);
+  } catch {
+    /* */
+  }
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+  if (!data?.slug || Date.now() - (data.at || 0) > 5 * 60 * 1000) return false;
+
+  if (data.chatMode) setChatMode(data.chatMode, { close: false });
+  if (data.slug && [...tddSelect.options].some((o) => o.value === data.slug)) {
+    tddSelect.value = data.slug;
+  }
+  showWorkOverlay({
+    title: "Continuing playable",
+    eyebrow: "Reload",
+    status: "Applying fresh modules…",
+  });
+  try {
+    await openPlayable({ slug: data.slug, resume: true });
+    restoreChatLog(data.messages || []);
+    if (data.openChat) setChatOpen(true);
+    hideWorkOverlay();
+    return true;
+  } catch (err) {
+    hideWorkOverlay();
+    appendChat("sys", String(err.message || err));
+    showScreen("start");
+    return false;
+  }
+}
+
 tddSelect.addEventListener("change", () => {
   renderMechanics();
   localStorage.setItem(LAST_SLUG_KEY, tddSelect.value);
 });
-providerSelect.addEventListener("change", async () => {
-  fillModelSelect(currentProvider()?.model);
-  await persistProviderSelection();
+
+modelPickers.push(
+  bindModelPicker({
+    root: startPicker,
+    trigger: startPickerTrigger,
+    triggerText: startPickerTriggerText,
+    popover: startPickerPopover,
+    blurb: startPickerBlurb,
+    providerEl: providerSelect,
+    modelEl: modelSelect,
+    customEl: modelCustom,
+  }),
+  bindModelPicker({
+    root: chatPicker,
+    trigger: chatPickerTrigger,
+    triggerText: chatPickerTriggerText,
+    popover: chatPickerPopover,
+    blurb: chatPickerBlurb,
+    providerEl: chatProviderSelect,
+    modelEl: chatModelSelect,
+    customEl: chatModelCustom,
+  }),
+);
+
+document.addEventListener("click", () => closeAllModelPickers());
+
+chatModeTrigger?.addEventListener("click", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (isChatModePickerOpen()) closeChatModePicker();
+  else openChatModePicker();
 });
-modelSelect.addEventListener("change", async () => {
-  modelCustom.hidden = modelSelect.value !== "__custom__";
-  if (modelSelect.value !== "__custom__") await persistProviderSelection();
+chatModePopover?.addEventListener("click", (e) => e.stopPropagation());
+chatModeAgent?.addEventListener("click", (e) => {
+  e.preventDefault();
+  setChatMode("agent");
 });
-modelCustom.addEventListener("change", () => persistProviderSelection());
-modelCustom.addEventListener("blur", () => persistProviderSelection());
+chatModeAsk?.addEventListener("click", (e) => {
+  e.preventDefault();
+  setChatMode("ask");
+});
 
 tddImport.addEventListener("change", async () => {
   const file = tddImport.files?.[0];
@@ -674,6 +1477,8 @@ generateBtn.addEventListener("click", async () => {
     status: `${slug} · ${providerSelect.value} / ${selectedModelValue()}`,
   });
   try {
+    let generateFailed = false;
+    let failMessage = "";
     await readSSE(
       "/api/sessions/generate-final",
       {
@@ -681,26 +1486,67 @@ generateBtn.addEventListener("click", async () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ slug }),
       },
-      (ev) => handleWorkEvent(ev),
+      (ev) => {
+        if (ev?.type === "error") {
+          generateFailed = true;
+          failMessage = ev.message || failMessage;
+        }
+        if (ev?.type === "benchmark" && ev.status === "error") {
+          generateFailed = true;
+          if (ev.errorMessage) failMessage = ev.errorMessage;
+        }
+        if (ev?.type === "benchmark" && ev.status === "max_turns") {
+          // not always fatal if main.js exists — checked below
+        }
+        handleWorkEvent(ev);
+      },
     );
+    await refreshContinueBtn();
+    if (generateFailed) {
+      showWorkFailure(
+        failMessage ||
+          "Generate Final failed. Open Benchmark for status/tokens; check provider/model errors.",
+      );
+      alert(
+        failMessage ||
+          "Generate Final failed. See the Failed overlay and Benchmark for details.",
+      );
+      return;
+    }
+    const st = await fetch("/api/gameplay/status").then((r) => r.json()).catch(() => ({ ready: false }));
+    if (!st.ready) {
+      const msg =
+        "Generate finished without public/gameplay/main.js (often max_turns). Try again or Chat: write main.js with mount/unmount.";
+      showWorkFailure(msg);
+      alert(msg);
+      return;
+    }
     hideWorkOverlay();
     await openPlayable({ slug, resume: false });
-    await refreshContinueBtn();
   } catch (err) {
     if (err.name === "AbortError") {
       appendWorkLog("Stopped");
+      showWorkFailure("Stopped by user");
       return;
     }
-    setWorkStatus(String(err.message || err));
-    appendWorkLog(String(err.message || err));
+    showWorkFailure(String(err.message || err));
     alert(err.message || err);
-    hideWorkOverlay();
   } finally {
     generateBtn.disabled = !providerState.configured;
   }
 });
 
 workStopBtn.addEventListener("click", () => cancelActiveWork());
+
+benchmarkBtn?.addEventListener("click", () => setBenchmarkOpen(true));
+benchmarkClose?.addEventListener("click", () => setBenchmarkOpen(false));
+benchmarkClearBtn?.addEventListener("click", async () => {
+  if (!confirm("Clear all benchmark history?")) return;
+  await clearBenchmarkData();
+});
+benchmarkOverlay?.addEventListener("click", (e) => {
+  if (e.target === benchmarkOverlay) setBenchmarkOpen(false);
+});
 
 skyBtn.addEventListener("click", async () => {
   const { getActiveSceneKit, toggleSkyMode, writeSkyMode, readSkyMode } = await import(
@@ -720,10 +1566,40 @@ window.addEventListener("plab:sky", () => {
   syncSkyIcon();
 });
 
+/** Left Shift held — used for Shift+Tab Agent/Ask toggle (chat open only). */
+let leftShiftHeld = false;
 window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !chatDrawer.hidden) {
-    setChatOpen(false);
+  if (e.code === "ShiftLeft") leftShiftHeld = true;
+});
+window.addEventListener("keyup", (e) => {
+  if (e.code === "ShiftLeft") leftShiftHeld = false;
+});
+window.addEventListener("blur", () => {
+  leftShiftHeld = false;
+});
+
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Tab" && leftShiftHeld && !chatDrawer.hidden) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeAllModelPickers();
+    setChatMode(chatMode === "ask" ? "agent" : "ask");
     return;
+  }
+  if (e.key === "Escape") {
+    if (modelPickers.some((p) => p.isOpen()) || isChatModePickerOpen()) {
+      closeAllModelPickers();
+      e.preventDefault();
+      return;
+    }
+    if (benchmarkOverlay && !benchmarkOverlay.hidden) {
+      setBenchmarkOpen(false);
+      return;
+    }
+    if (!chatDrawer.hidden) {
+      setChatOpen(false);
+      return;
+    }
   }
   if (e.key === "n" || e.key === "N") {
     if (document.activeElement === chatInput) return;
@@ -752,25 +1628,46 @@ chatForm.addEventListener("submit", async (e) => {
   const message = chatInput.value.trim();
   if (!message) return;
   chatInput.value = "";
-  appendChat("user", message);
-  const runNotes = createChatRunCollector();
-  showWorkOverlay({ title: "Chat iteration", eyebrow: "Working", status: "Sending…" });
+  appendChat("user", message, { mode: chatMode });
+  const runNotes = createChatRunCollector(message);
+  showWorkOverlay({
+    title: chatMode === "ask" ? "Ask (read-only)" : "Chat iteration",
+    eyebrow: chatMode === "ask" ? "Ask" : "Agent",
+    status: "Sending…",
+  });
   try {
+    const id = chatProviderSelect?.value || providerSelect.value;
+    const model = selectedChatModelValue();
+    if (id && model) await persistProviderSelectionFrom(id, model);
+
+    let chatFailed = false;
     await readSSE(
       `/api/sessions/${sessionId}/chat`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, mode: chatMode }),
       },
       (ev) => {
+        if (ev?.type === "error") chatFailed = true;
         runNotes.ingest(ev);
         handleWorkEvent(ev, { chat: true });
       },
     );
     hideWorkOverlay();
-    await mountGame();
-    appendChat("assistant", runNotes.buildReply());
+    const reply = runNotes.buildReply();
+    if (chatMode === "agent" && !chatFailed && !runNotes.hadError && runNotes.wroteFiles) {
+      // Sibling ES modules stay cached on soft remount — hard reload + continue playable.
+      schedulePlayableReload({
+        assistantReply: reply,
+        openChat: true,
+      });
+      return;
+    }
+    if (chatMode === "agent" && !chatFailed && !runNotes.hadError) {
+      await mountGame();
+    }
+    appendChat("assistant", reply);
   } catch (err) {
     if (err.name === "AbortError") {
       appendChat("sys", "Stopped");
@@ -812,14 +1709,19 @@ syncBtn.addEventListener("click", async () => {
 exportBtn.addEventListener("click", () => runExportBuild());
 exportPlayBtn.addEventListener("click", () => runExportBuild());
 
-reloadBtn.addEventListener("click", () => mountGame());
+reloadBtn.addEventListener("click", () => {
+  schedulePlayableReload({ openChat: !chatDrawer.hidden, assistantReply: null });
+});
 
 try {
   const es = new EventSource("/api/events");
   es.onmessage = async (msg) => {
     try {
       const ev = JSON.parse(msg.data);
-      if (ev.type === "reload" && !playEl.hidden && workOverlay.hidden) await mountGame();
+      // Soft remount is unreliable for cached sibling modules; ignore while working.
+      if (ev.type === "reload" && !playEl.hidden && workOverlay.hidden) {
+        /* chat handler schedules hard reload when files were written */
+      }
     } catch {
       /* */
     }
@@ -830,6 +1732,13 @@ try {
 
 await loadTdds();
 await loadProviders();
+await loadBenchmark();
 await refreshContinueBtn();
+try {
+  setChatMode(localStorage.getItem(CHAT_MODE_KEY) === "ask" ? "ask" : "agent");
+} catch {
+  setChatMode("agent");
+}
 skyIcon.innerHTML = ICON_SUN;
 setChatOpen(false);
+await maybeResumeAfterReload();

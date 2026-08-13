@@ -26,12 +26,15 @@ export function isKernelPath(rel) {
 
 /**
  * @param {string} rel
- * @param {"generate"|"chat"|"sync"} mode
+ * @param {"generate"|"chat"|"ask"|"sync"} mode
  * @param {{ slug?: string }} [opts]
  */
 export function assertAgentWriteAllowed(rel, mode = "generate", opts = {}) {
   // Collapse .. segments so public/gameplay/../../server/x cannot bypass checks
   const r = canonicalizeRel(rel);
+  if (mode === "ask") {
+    throw new Error("Ask mode is read-only — switch to Agent mode to edit gameplay files");
+  }
   if (mode === "sync") {
     const slug = opts.slug || "";
     if (!slug || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(slug)) {

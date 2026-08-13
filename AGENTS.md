@@ -54,6 +54,10 @@ Required:
 
 Fail examples: lone blue cube on empty plane; mechanics with no win/lose; HUD listing file names.
 
+## Soft playability advice (never blocks delivery)
+
+After Generate Final / Chat, the lab may emit **hints** (e.g. kart laps not incrementing). Hints are advisory only — the playable still opens. Fix via Chat; do not fail the build over heuristics.
+
 ## Commands
 
 - `npm start` — lab on port 3850 (or `PORT`)

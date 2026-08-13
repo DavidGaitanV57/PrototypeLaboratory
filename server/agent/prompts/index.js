@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildGenreBrief } from "../playabilityAdvisor.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = __dirname;
@@ -10,20 +11,27 @@ async function readPrompt(name) {
 }
 
 export async function loadPromptPack() {
-  const [quality, generateFinal, chat, syncTdd] = await Promise.all([
+  const [quality, generateFinal, chat, chatAsk, syncTdd, genreLoop] = await Promise.all([
     readPrompt("playable-quality.md"),
     readPrompt("generate-final.md"),
     readPrompt("chat.md"),
+    readPrompt("chat-ask.md"),
     readPrompt("sync-tdd.md"),
+    readPrompt("genre-loop.md"),
   ]);
-  return { quality, generateFinal, chat, syncTdd };
+  return { quality, generateFinal, chat, chatAsk, syncTdd, genreLoop };
 }
 
 export function buildGenerateFinalPrompt({ slug, tddText, agentsMd, pack }) {
+  const genreBrief = buildGenreBrief(tddText);
   return [
     agentsMd,
     "",
     pack.quality,
+    "",
+    pack.genreLoop,
+    "",
+    genreBrief,
     "",
     pack.generateFinal,
     "",
@@ -35,17 +43,56 @@ export function buildGenerateFinalPrompt({ slug, tddText, agentsMd, pack }) {
   ].join("\n");
 }
 
-export function buildChatPrompt({ slug, message, agentsMd, pack }) {
+export function buildChatPrompt({
+  slug,
+  message,
+  agentsMd,
+  pack,
+  tddText = "",
+  adviceDigest = "",
+  mode = "agent",
+}) {
+  const ask = mode === "ask";
+  const chatRules = ask ? pack.chatAsk : pack.chat;
+
+  // Ask: keep context light so the model answers the question, not a full design audit.
+  if (ask) {
+    return [
+      chatRules,
+      "",
+      `## Mode: ASK (read-only)`,
+      `Do not write or modify any files. TDD slug: ${slug}.`,
+      "Read gameplay/TDD only as needed to answer. Match reply length to the question.",
+      adviceDigest
+        ? `\n## Soft playability notes (only if relevant to their question)\n${adviceDigest}\n`
+        : "",
+      `User request:\n${message}`,
+    ]
+      .filter((s) => s !== "")
+      .join("\n");
+  }
+
+  const genreBrief = tddText ? buildGenreBrief(tddText) : "";
   return [
     agentsMd,
     "",
     pack.quality,
     "",
-    pack.chat,
+    pack.genreLoop,
     "",
-    `TDD slug: ${slug} (read-only this turn)`,
+    genreBrief,
+    "",
+    chatRules,
+    "",
+    `## Mode: AGENT (edit gameplay)`,
+    `TDD slug: ${slug} (TDD file is read-only this turn)`,
+    adviceDigest
+      ? `\n## Soft playability notes from last check (fix if the user is addressing them)\n${adviceDigest}\n`
+      : "",
     `User request:\n${message}`,
-  ].join("\n");
+  ]
+    .filter((s) => s !== "")
+    .join("\n");
 }
 
 export function buildSyncPrompt({

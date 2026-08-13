@@ -1,6 +1,7 @@
 node_modules/
 .env
 .lab-agent-provider
+.lab-last-benchmark.json
 sessions/
 exports/*
 !exports/.gitkeep

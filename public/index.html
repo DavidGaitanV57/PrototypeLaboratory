@@ -16,11 +16,7 @@
     <div id="app">
       <section id="start" class="screen screen--start" data-screen="start">
         <header class="start-brand">
-          <p class="eyebrow">Operate</p>
           <h1>Prototype<br />Laboratory</h1>
-          <p class="lede">
-            Read a V57 TDD. Generate a playable graybox. Tune feel. Sync the document Unity will ship from.
-          </p>
         </header>
 
         <div class="workbench">
@@ -38,12 +34,52 @@
           </div>
 
           <div class="workbench__col">
-            <label class="field-label" for="providerSelect">Agent provider</label>
-            <select id="providerSelect"></select>
-            <label class="field-label" for="modelSelect" style="margin-top: 0.85rem">Model</label>
-            <div class="row gap" style="align-items: stretch">
-              <select id="modelSelect" style="flex: 1"></select>
-              <input id="modelCustom" type="text" placeholder="custom id" style="flex: 1" hidden />
+            <label class="field-label" id="startPickerLabelFor">Agent</label>
+            <div class="model-picker model-picker--block" id="startPicker">
+              <button
+                type="button"
+                id="startPickerTrigger"
+                class="model-picker__trigger model-picker__trigger--block"
+                aria-haspopup="dialog"
+                aria-expanded="false"
+                aria-labelledby="startPickerLabelFor startPickerTriggerText"
+              >
+                <span id="startPickerTriggerText">Auto</span>
+                <span class="model-picker__chev" aria-hidden="true"></span>
+              </button>
+              <select id="providerSelect" class="model-picker__native" tabindex="-1" aria-hidden="true"></select>
+              <select id="modelSelect" class="model-picker__native" tabindex="-1" aria-hidden="true"></select>
+              <input id="modelCustom" type="text" class="model-picker__native" placeholder="custom id" hidden />
+              <div id="startPickerPopover" class="model-picker__popover" hidden role="dialog" aria-label="Provider and model">
+                <p id="startPickerBlurb" class="model-picker__blurb"></p>
+                <div class="model-picker__body" data-view="home">
+                  <div class="model-picker__home">
+                    <button type="button" class="model-picker__nav" data-goto="provider">
+                      <span class="model-picker__nav-main">
+                        <span class="model-picker__nav-k">Provider</span>
+                        <span class="model-picker__nav-v" data-bind="provider"></span>
+                      </span>
+                      <span class="model-picker__nav-chev" aria-hidden="true"></span>
+                    </button>
+                    <button type="button" class="model-picker__nav" data-goto="model">
+                      <span class="model-picker__nav-main">
+                        <span class="model-picker__nav-k">Model</span>
+                        <span class="model-picker__nav-v" data-bind="model"></span>
+                      </span>
+                      <span class="model-picker__nav-chev" aria-hidden="true"></span>
+                    </button>
+                  </div>
+                  <div class="model-picker__panel" data-panel="provider" hidden>
+                    <button type="button" class="model-picker__back" data-goto="home">Provider</button>
+                    <div class="model-picker__options" data-options="provider"></div>
+                  </div>
+                  <div class="model-picker__panel" data-panel="model" hidden>
+                    <button type="button" class="model-picker__back" data-goto="home">Model</button>
+                    <div class="model-picker__options" data-options="model"></div>
+                    <input type="text" class="model-picker__custom" data-custom placeholder="Custom model id…" hidden />
+                  </div>
+                </div>
+              </div>
             </div>
             <p id="providerHint" class="hint"></p>
             <p id="providerError" class="hint hint--danger" hidden></p>
@@ -56,7 +92,9 @@
             <button type="button" id="exportBtn" class="btn btn--ghost btn--xl" hidden>
               Export playable
             </button>
-            <p class="hint">Builds the full playable loop from every §B mechanic, then opens Play. Requires an API key in .env.</p>
+            <button type="button" id="benchmarkBtn" class="btn btn--ghost btn--xl">
+              Benchmark
+            </button>
           </div>
         </div>
 
@@ -84,8 +122,97 @@
           </header>
           <div id="chatLog" class="chat-log"></div>
           <form id="chatForm" class="chat-form">
-            <input id="chatInput" type="text" placeholder="Tune speed, jump, timer…" autocomplete="off" />
-            <button type="submit" class="btn btn--primary btn--sm">Send</button>
+            <div class="model-picker model-picker--mode" id="chatModePicker">
+              <button
+                type="button"
+                id="chatModeTrigger"
+                class="model-picker__trigger"
+                aria-haspopup="dialog"
+                aria-expanded="false"
+                title="Chat mode (Left Shift+Tab)"
+              >
+                <span id="chatModeTriggerText">Agent</span>
+                <span class="model-picker__chev" aria-hidden="true"></span>
+              </button>
+              <div
+                id="chatModePopover"
+                class="model-picker__popover model-picker__popover--up model-picker__popover--mode"
+                hidden
+                role="dialog"
+                aria-label="Chat mode"
+              >
+                <p id="chatModeBlurb" class="model-picker__blurb">
+                  Edits gameplay files under public/gameplay.
+                </p>
+                <div class="model-picker__options model-picker__options--modes">
+                  <button type="button" class="model-picker__option is-active" data-mode="agent" id="chatModeAgent">
+                    <span class="model-picker__option-main">
+                      <span class="model-picker__option-title">Agent</span>
+                      <span class="model-picker__option-desc">Edit gameplay files</span>
+                    </span>
+                  </button>
+                  <button type="button" class="model-picker__option" data-mode="ask" id="chatModeAsk">
+                    <span class="model-picker__option-main">
+                      <span class="model-picker__option-title">Ask</span>
+                      <span class="model-picker__option-desc">Diagnose only, no writes</span>
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <input
+              id="chatInput"
+              type="text"
+              placeholder="Tune feel, or ask why AI stuck on power-up…"
+              autocomplete="off"
+            />
+            <div class="model-picker model-picker--chat" id="chatPicker">
+              <button
+                type="button"
+                id="chatPickerTrigger"
+                class="model-picker__trigger"
+                aria-haspopup="dialog"
+                aria-expanded="false"
+                title="Provider & model"
+              >
+                <span id="chatPickerTriggerText">Auto</span>
+                <span class="model-picker__chev" aria-hidden="true"></span>
+              </button>
+              <select id="chatProviderSelect" class="model-picker__native" tabindex="-1" aria-hidden="true"></select>
+              <select id="chatModelSelect" class="model-picker__native" tabindex="-1" aria-hidden="true"></select>
+              <input id="chatModelCustom" type="text" class="model-picker__native" placeholder="custom id" hidden />
+              <div id="chatPickerPopover" class="model-picker__popover model-picker__popover--up" hidden role="dialog" aria-label="Provider and model">
+                <p id="chatPickerBlurb" class="model-picker__blurb"></p>
+                <div class="model-picker__body" data-view="home">
+                  <div class="model-picker__home">
+                    <button type="button" class="model-picker__nav" data-goto="provider">
+                      <span class="model-picker__nav-main">
+                        <span class="model-picker__nav-k">Provider</span>
+                        <span class="model-picker__nav-v" data-bind="provider"></span>
+                      </span>
+                      <span class="model-picker__nav-chev" aria-hidden="true"></span>
+                    </button>
+                    <button type="button" class="model-picker__nav" data-goto="model">
+                      <span class="model-picker__nav-main">
+                        <span class="model-picker__nav-k">Model</span>
+                        <span class="model-picker__nav-v" data-bind="model"></span>
+                      </span>
+                      <span class="model-picker__nav-chev" aria-hidden="true"></span>
+                    </button>
+                  </div>
+                  <div class="model-picker__panel" data-panel="provider" hidden>
+                    <button type="button" class="model-picker__back" data-goto="home">Provider</button>
+                    <div class="model-picker__options" data-options="provider"></div>
+                  </div>
+                  <div class="model-picker__panel" data-panel="model" hidden>
+                    <button type="button" class="model-picker__back" data-goto="home">Model</button>
+                    <div class="model-picker__options" data-options="model"></div>
+                    <input type="text" class="model-picker__custom" data-custom placeholder="Custom model id…" hidden />
+                  </div>
+                </div>
+              </div>
+            </div>
+            <button type="submit" class="btn btn--primary btn--sm chat-form__send" aria-label="Send">↑</button>
           </form>
         </aside>
 
@@ -101,6 +228,26 @@
           <ul id="workLog" class="work-log"></ul>
           <div class="row end">
             <button id="workStopBtn" class="btn btn--danger" type="button">Stop</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="benchmarkOverlay" class="bench-overlay" data-plab-ui hidden>
+        <div class="bench-card" role="dialog" aria-modal="true" aria-labelledby="benchmarkTitle">
+          <header class="bench-card__head">
+            <h2 id="benchmarkTitle">Benchmark</h2>
+            <button type="button" id="benchmarkClose" class="btn btn--ghost btn--sm">Close</button>
+          </header>
+          <p id="benchmarkEmpty" class="benchmark__empty">No agent runs yet</p>
+          <div id="benchmarkBody" class="benchmark__body" hidden>
+            <dl id="benchmarkStats" class="benchmark__stats"></dl>
+            <p class="field-label" style="margin-top: 0.75rem">Recent runs</p>
+            <ul id="benchmarkHistory" class="benchmark__history"></ul>
+          </div>
+          <div class="row end gap" style="margin-top: 1rem">
+            <button type="button" id="benchmarkClearBtn" class="btn btn--danger btn--sm">
+              Clear data
+            </button>
           </div>
         </div>
       </div>

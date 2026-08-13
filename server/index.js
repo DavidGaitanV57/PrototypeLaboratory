@@ -14,6 +14,7 @@ import {
   setActiveProvider,
   getActiveProvider,
 } from "./agent/providers/catalog.js";
+import { initBenchmarkStore, getBenchmarkState, clearBenchmark, recordBenchmark } from "./agent/benchmarkStore.js";
 import { assertSafeSlug } from "./security/paths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -206,11 +207,35 @@ app.post("/api/sessions/generate-final", async (req, res) => {
       onEvent: (ev) => send(ev),
     });
 
+    try {
+      await fs.access(path.join(GAMEPLAY, "main.js"));
+    } catch {
+      send({
+        type: "error",
+        message:
+          "Generate finished but public/gameplay/main.js is missing (agent hit turn limit or stopped early). Run Generate Final again, or Chat: \"write main.js mount/unmount\".",
+      });
+      return;
+    }
+
     send({ type: "ready", entry: "/gameplay/main.js" });
     broadcastReload("generate");
     send({ type: "done", sessionId });
   } catch (err) {
-    send({ type: "error", message: err.message || String(err) });
+    const message = err.message || String(err);
+    try {
+      const state = getBenchmarkState();
+      if (state?.last && state.last.status === "error" && !state.last.errorMessage) {
+        await recordBenchmark(ROOT, {
+          type: "benchmark",
+          ...state.last,
+          errorMessage: message.slice(0, 800),
+        });
+      }
+    } catch {
+      /* */
+    }
+    send({ type: "error", message });
   } finally {
     res.end();
   }
@@ -227,9 +252,13 @@ app.post("/api/sessions/:id/chat", async (req, res) => {
     const message = String(req.body?.message || "").trim();
     if (!message) throw new Error("message required");
     if (message.length > 20000) throw new Error("message too long");
-    await session.chat(message, { onEvent: (ev) => send(ev) });
-    broadcastReload("chat");
-    send({ type: "done" });
+    const mode = req.body?.mode === "ask" ? "ask" : "agent";
+    const outcome = await session.chat(message, {
+      mode,
+      onEvent: (ev) => send(ev),
+    });
+    if (mode !== "ask") broadcastReload("chat");
+    send({ type: "done", mode: outcome?.mode || mode });
   } catch (err) {
     send({ type: "error", message: err.message || String(err) });
   } finally {
@@ -288,6 +317,20 @@ app.get("/api/gameplay/status", async (_req, res) => {
   }
 });
 
+app.get("/api/benchmark", (_req, res) => {
+  const state = getBenchmarkState();
+  res.json(state);
+});
+
+app.delete("/api/benchmark", async (_req, res) => {
+  try {
+    const state = await clearBenchmark(ROOT);
+    res.json(state);
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
 app.post("/api/tdds/:slug/export", async (req, res) => {
   try {
     const slug = parseSlug(req.params.slug);
@@ -312,6 +355,7 @@ await fs.mkdir(SESSIONS, { recursive: true });
 await fs.mkdir(GAMEPLAY, { recursive: true });
 await fs.mkdir(path.join(ROOT, "exports"), { recursive: true });
 await initProviderCatalog(ROOT);
+await initBenchmarkStore(ROOT);
 
 const bootProviders = providerStatus();
 if (!bootProviders.configured) {
