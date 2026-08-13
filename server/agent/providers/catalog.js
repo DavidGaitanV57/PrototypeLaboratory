@@ -48,8 +48,16 @@ export const KNOWN_PROVIDERS = [
     urlVar: "ANTHROPIC_BASE_URL",
     defaultUrl: "https://api.anthropic.com/v1",
     modelVar: "ANTHROPIC_MODEL",
-    defaultModel: "claude-sonnet-4-5",
-    suggestedModels: ["claude-sonnet-4-5", "claude-opus-4"],
+    defaultModel: "claude-sonnet-4-6",
+    suggestedModels: [
+      "claude-sonnet-4-6",
+      "claude-opus-4-6",
+      "claude-opus-4-7",
+      "claude-opus-4-8",
+      "claude-sonnet-5",
+      "claude-opus-5",
+      "claude-fable-5",
+    ],
   },
   {
     id: "kimi",
