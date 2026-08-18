@@ -254,6 +254,29 @@
           </div>
         </div>
       </div>
+
+      <div id="syncReviewOverlay" class="bench-overlay" data-plab-ui hidden>
+        <div class="bench-card sync-review" role="dialog" aria-modal="true" aria-labelledby="syncReviewTitle">
+          <header class="bench-card__head">
+            <h2 id="syncReviewTitle">Sync TDD</h2>
+            <button type="button" id="syncReviewClose" class="btn btn--ghost btn--sm">Close</button>
+          </header>
+          <p class="sync-review__lede">
+            Choose which playable changes to write into the TDD. Unchecked items stay out of the spec.
+          </p>
+          <p id="syncReviewEmpty" class="benchmark__empty" hidden>No TDD deltas found vs the current playable.</p>
+          <div class="sync-review__toolbar">
+            <button type="button" id="syncReviewAll" class="btn btn--ghost btn--sm">Select all</button>
+            <button type="button" id="syncReviewNone" class="btn btn--ghost btn--sm">Select none</button>
+            <span id="syncReviewCount" class="sync-review__count"></span>
+          </div>
+          <ul id="syncReviewList" class="sync-review__list"></ul>
+          <div class="row end gap" style="margin-top: 1rem">
+            <button type="button" id="syncReviewCancel" class="btn btn--ghost">Cancel</button>
+            <button type="button" id="syncReviewApply" class="btn btn--accent">Apply selected</button>
+          </div>
+        </div>
+      </div>
     </div>
     <script type="module" src="/app.js"></script>
   </body>

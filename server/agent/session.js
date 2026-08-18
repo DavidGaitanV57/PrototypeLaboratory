@@ -8,12 +8,18 @@ import { createLlmProvider } from "./providers/llm.js";
 import {
   buildChatPrompt,
   buildGenerateFinalPrompt,
+  buildSyncPreviewPrompt,
   buildSyncPrompt,
   loadPromptPack,
 } from "./prompts/index.js";
 import { readTdd } from "../tdd/parser.js";
 import { finalizeTddSync } from "../tdd/sync.js";
-import { listGameplayFiles, mergeChatDigest } from "./gameplayEvidence.js";
+import {
+  formatSelectedSyncItems,
+  listGameplayFiles,
+  mergeChatDigest,
+  parseSyncProposal,
+} from "./gameplayEvidence.js";
 import {
   advisePlayability,
   formatAdviceForChat,
@@ -369,7 +375,57 @@ export async function createSession({ root, tddsRoot, slug }) {
         activeProvider = null;
       }
     },
-    async syncTdd({ summary = "", chatDigest = "" } = {}, handlers = {}) {
+    async previewSyncTdd({ summary = "", chatDigest = "" } = {}, handlers = {}) {
+      if (busy) throw new Error("Session busy");
+      busy = true;
+      controller = new AbortController();
+      runMeta = { mode: "ask", op: "sync" };
+      const assistantChunks = [];
+      try {
+        const tdd = await readTdd(tddsRoot, slug);
+        const gameplayFiles = await listGameplayFiles(root);
+        const digest = mergeChatDigest(chatHistory, chatDigest);
+        const prompt = buildSyncPreviewPrompt({
+          slug,
+          tddText: tdd.text,
+          summary:
+            summary ||
+            "List TDD updates implied by the current playable vs the spec.",
+          chatDigest: digest,
+          gameplayFiles,
+          root,
+          pack,
+        });
+        const onEvent = (ev) => {
+          if (ev?.type === "assistant" && ev.text) assistantChunks.push(String(ev.text));
+          handlers.onEvent?.(ev);
+        };
+        const result = await runProvider(prompt, {
+          writeMode: "ask",
+          op: "sync",
+          mode: "ask",
+          onEvent,
+        });
+        if (result?.status === "cancelled" || result?.resumable) {
+          captureCheckpoint(runMeta);
+          return { items: [], cancelled: true };
+        }
+        const proposal = parseSyncProposal(assistantChunks.join("\n\n"));
+        handlers.onEvent?.({ type: "sync-proposal", items: proposal.items });
+        return proposal;
+      } catch (err) {
+        captureCheckpoint(runMeta);
+        throw err;
+      } finally {
+        if (activeProvider?.getCheckpoint?.()?.messages?.length) {
+          captureCheckpoint(runMeta);
+        }
+        busy = false;
+        controller = null;
+        activeProvider = null;
+      }
+    },
+    async syncTdd({ summary = "", chatDigest = "", selectedItems = [] } = {}, handlers = {}) {
       if (busy) throw new Error("Session busy");
       busy = true;
       controller = new AbortController();
@@ -378,6 +434,7 @@ export async function createSession({ root, tddsRoot, slug }) {
         const tdd = await readTdd(tddsRoot, slug);
         const gameplayFiles = await listGameplayFiles(root);
         const digest = mergeChatDigest(chatHistory, chatDigest);
+        const selected = Array.isArray(selectedItems) ? selectedItems : [];
         const prompt = buildSyncPrompt({
           slug,
           tddText: tdd.text,
@@ -387,6 +444,7 @@ export async function createSession({ root, tddsRoot, slug }) {
               ? "Sync validated chat iterations and prototype behavior into the TDD"
               : "Promote validated prototype behavior into the TDD product spec"),
           chatDigest: digest,
+          selectedItems: formatSelectedSyncItems(selected),
           gameplayFiles,
           root,
           agentsMd,

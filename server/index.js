@@ -313,6 +313,29 @@ app.post("/api/sessions/:id/cancel", async (req, res) => {
   res.json({ ok: true, ...latest });
 });
 
+app.post("/api/sessions/:id/sync-tdd/preview", async (req, res) => {
+  const session = sessions.get(req.params.id);
+  const send = sseInit(res);
+  if (!session) {
+    send({ type: "error", message: "Unknown session" });
+    return res.end();
+  }
+  try {
+    const summary = String(req.body?.summary || "").trim().slice(0, 8000);
+    const chatDigest = String(req.body?.chatDigest || "").trim().slice(0, 20000);
+    const proposal = await session.previewSyncTdd(
+      { summary, chatDigest },
+      { onEvent: (ev) => send(ev) },
+    );
+    send({ type: "sync-proposal", items: proposal?.items || [] });
+    send({ type: "done", preview: true, cancelled: !!proposal?.cancelled });
+  } catch (err) {
+    send({ type: "error", message: err.message || String(err) });
+  } finally {
+    res.end();
+  }
+});
+
 app.post("/api/sessions/:id/sync-tdd", async (req, res) => {
   const session = sessions.get(req.params.id);
   const send = sseInit(res);
@@ -323,9 +346,22 @@ app.post("/api/sessions/:id/sync-tdd", async (req, res) => {
   try {
     const summary = String(req.body?.summary || "").trim().slice(0, 8000);
     const chatDigest = String(req.body?.chatDigest || "").trim().slice(0, 20000);
-    const result = await session.syncTdd({ summary, chatDigest }, {
-      onEvent: (ev) => send(ev),
-    });
+    const selectedItems = Array.isArray(req.body?.selectedItems)
+      ? req.body.selectedItems.slice(0, 40).map((it) => ({
+          id: String(it?.id || "").slice(0, 80),
+          kind: String(it?.kind || "").slice(0, 32),
+          title: String(it?.title || "").slice(0, 160),
+          section: String(it?.section || "").slice(0, 80),
+          detail: String(it?.detail || "").slice(0, 600),
+        }))
+      : [];
+    if (!selectedItems.length) {
+      throw new Error("Select at least one TDD change to apply");
+    }
+    const result = await session.syncTdd(
+      { summary, chatDigest, selectedItems },
+      { onEvent: (ev) => send(ev) },
+    );
     send({ type: "synced", ...result });
     send({ type: "done" });
   } catch (err) {

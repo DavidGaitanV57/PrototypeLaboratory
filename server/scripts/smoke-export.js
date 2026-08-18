@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { exportBuild } from "../export.js";
-import { listGameplayFiles, mergeChatDigest } from "../agent/gameplayEvidence.js";
+import { listGameplayFiles, mergeChatDigest, parseSyncProposal } from "../agent/gameplayEvidence.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const errors = [];
@@ -22,6 +22,15 @@ const digest = mergeChatDigest(
 );
 if (digest.includes("minimap") && digest.includes("invert steer")) ok("mergeChatDigest");
 else fail("mergeChatDigest missing expected lines");
+
+const proposal = parseSyncProposal(`Here is the list:
+\`\`\`json
+{"items":[{"id":"minimap","kind":"hud","title":"Add minimap HUD","section":"§9.1","detail":"Top-right race minimap"}]}
+\`\`\`
+`);
+if (proposal.items.length === 1 && proposal.items[0].id === "minimap") ok("parseSyncProposal");
+else fail("parseSyncProposal did not extract checklist item");
+
 
 const files = await listGameplayFiles(ROOT);
 if (files.some((f) => f.endsWith("main.js"))) ok(`listGameplayFiles (${files.length} files)`);

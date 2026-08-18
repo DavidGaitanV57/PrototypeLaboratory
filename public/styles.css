@@ -224,6 +224,93 @@ body {
   font-weight: 700;
 }
 
+.sync-review {
+  width: min(640px, 100%);
+}
+
+.sync-review__lede {
+  margin: 0 0 0.75rem;
+  color: var(--mute);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.sync-review__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.55rem;
+}
+
+.sync-review__count {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--mute);
+}
+
+.sync-review__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: min(48vh, 420px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+
+.sync-review__item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.55rem 0.7rem;
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.sync-review__item:last-child {
+  border-bottom: 0;
+}
+
+.sync-review__item:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.sync-review__item input {
+  margin-top: 0.2rem;
+  accent-color: var(--accent-2);
+}
+
+.sync-review__title {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.sync-review__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.2rem 0 0.25rem;
+}
+
+.sync-review__chip {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-2);
+  border: 1px solid rgba(212, 162, 78, 0.35);
+  border-radius: 999px;
+  padding: 0.08rem 0.45rem;
+}
+
+.sync-review__detail {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--mute);
+  line-height: 1.4;
+}
+
 .field-label {
   display: block;
   font-family: var(--font-mono);

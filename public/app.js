@@ -56,6 +56,15 @@ const benchmarkEmpty = document.getElementById("benchmarkEmpty");
 const benchmarkBody = document.getElementById("benchmarkBody");
 const benchmarkStats = document.getElementById("benchmarkStats");
 const benchmarkHistory = document.getElementById("benchmarkHistory");
+const syncReviewOverlay = document.getElementById("syncReviewOverlay");
+const syncReviewClose = document.getElementById("syncReviewClose");
+const syncReviewCancel = document.getElementById("syncReviewCancel");
+const syncReviewApply = document.getElementById("syncReviewApply");
+const syncReviewAll = document.getElementById("syncReviewAll");
+const syncReviewNone = document.getElementById("syncReviewNone");
+const syncReviewList = document.getElementById("syncReviewList");
+const syncReviewEmpty = document.getElementById("syncReviewEmpty");
+const syncReviewCount = document.getElementById("syncReviewCount");
 const workEyebrow = document.getElementById("workEyebrow");
 const workTitle = document.getElementById("workTitle");
 const workStatus = document.getElementById("workStatus");
@@ -81,7 +90,11 @@ const CHAT_MODE_KEY = "plab.chatMode";
 const PLAYABLE_RESUME_KEY = "plab.resumePlayable";
 
 function updateGameInputBlock() {
-  const block = !chatDrawer.hidden || !workOverlay.hidden || !benchmarkOverlay.hidden;
+  const block =
+    !chatDrawer.hidden ||
+    !workOverlay.hidden ||
+    !benchmarkOverlay.hidden ||
+    (syncReviewOverlay && !syncReviewOverlay.hidden);
   document.body.dataset.plabGameInput = block ? "blocked" : "allowed";
   if (block) window.dispatchEvent(new CustomEvent("plab:input-block"));
 }
@@ -135,6 +148,10 @@ function describeAgentStep(ev) {
   }
   if (ev.type === "error" && ev.message) return ev.message;
   if (ev.type === "synced") return `Synced${ev.version ? ` v${ev.version}` : ""}`;
+  if (ev.type === "sync-proposal") {
+    const n = (ev.items || []).length;
+    return n ? `Proposed ${n} TDD change${n === 1 ? "" : "s"}` : "No TDD deltas proposed";
+  }
   if (ev.type === "ready") return "Playable ready";
   if (ev.type === "benchmark") {
     const dur = formatDurationMs(ev.durationMs);
@@ -242,6 +259,80 @@ function setBenchmarkOpen(open) {
   benchmarkOverlay.hidden = !open;
   updateGameInputBlock();
   if (open) renderBenchmark(window.__plabBenchmark || { last: null, history: [] });
+}
+
+/** @type {{ id: string, kind: string, title: string, section: string, detail: string }[]} */
+let syncProposalItems = [];
+let syncProposalMeta = { summary: "", chatDigest: "" };
+
+function setSyncReviewOpen(open) {
+  if (!syncReviewOverlay) return;
+  syncReviewOverlay.hidden = !open;
+  updateGameInputBlock();
+}
+
+function selectedSyncItems() {
+  if (!syncReviewList) return [];
+  return [...syncReviewList.querySelectorAll("input[type=checkbox]:checked")].map((el) => {
+    const id = el.value;
+    return syncProposalItems.find((it) => it.id === id);
+  }).filter(Boolean);
+}
+
+function updateSyncReviewCount() {
+  if (!syncReviewCount || !syncReviewApply) return;
+  const total = syncProposalItems.length;
+  const n = selectedSyncItems().length;
+  syncReviewCount.textContent = total ? `${n} / ${total} selected` : "";
+  syncReviewApply.disabled = n === 0;
+}
+
+function renderSyncReview(items) {
+  syncProposalItems = Array.isArray(items) ? items : [];
+  if (!syncReviewList) return;
+  syncReviewList.replaceChildren();
+  if (syncReviewEmpty) syncReviewEmpty.hidden = syncProposalItems.length > 0;
+  if (syncReviewList) syncReviewList.hidden = syncProposalItems.length === 0;
+  for (const it of syncProposalItems) {
+    const li = document.createElement("li");
+    const label = document.createElement("label");
+    label.className = "sync-review__item";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = true;
+    cb.value = it.id;
+    cb.addEventListener("change", updateSyncReviewCount);
+    const body = document.createElement("div");
+    const title = document.createElement("div");
+    title.className = "sync-review__title";
+    title.textContent = it.title;
+    const meta = document.createElement("div");
+    meta.className = "sync-review__meta";
+    if (it.kind) {
+      const chip = document.createElement("span");
+      chip.className = "sync-review__chip";
+      chip.textContent = it.kind;
+      meta.appendChild(chip);
+    }
+    if (it.section) {
+      const chip = document.createElement("span");
+      chip.className = "sync-review__chip";
+      chip.textContent = it.section;
+      meta.appendChild(chip);
+    }
+    body.appendChild(title);
+    if (meta.childNodes.length) body.appendChild(meta);
+    if (it.detail) {
+      const detail = document.createElement("p");
+      detail.className = "sync-review__detail";
+      detail.textContent = it.detail;
+      body.appendChild(detail);
+    }
+    label.append(cb, body);
+    li.appendChild(label);
+    syncReviewList.appendChild(li);
+  }
+  updateSyncReviewCount();
 }
 
 async function clearBenchmarkData() {
@@ -1656,6 +1747,10 @@ window.addEventListener("keydown", (e) => {
       setBenchmarkOpen(false);
       return;
     }
+    if (syncReviewOverlay && !syncReviewOverlay.hidden) {
+      setSyncReviewOpen(false);
+      return;
+    }
     if (!chatDrawer.hidden) {
       setChatOpen(false);
       return;
@@ -1811,15 +1906,58 @@ syncBtn.addEventListener("click", async () => {
   const summary = chatDigest
     ? "Sync validated chat iterations and prototype behavior into the TDD"
     : "Promote validated prototype behavior into the TDD product spec";
-  showWorkOverlay({ title: "Sync TDD", eyebrow: "Writing", status: "Reading gameplay + updating TDD…" });
-  if (chatDigest) appendWorkLog("Including chat digest from this session");
+  syncProposalMeta = { summary, chatDigest };
+  showWorkOverlay({
+    title: "Review TDD changes",
+    eyebrow: "Preview",
+    status: "Comparing playable vs TDD…",
+  });
+  try {
+    let items = [];
+    await readSSE(
+      `/api/sessions/${sessionId}/sync-tdd/preview`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ summary, chatDigest }),
+      },
+      (ev) => {
+        if (ev?.type === "sync-proposal" && Array.isArray(ev.items)) items = ev.items;
+        handleWorkEvent(ev);
+      },
+    );
+    hideWorkOverlay();
+    renderSyncReview(items);
+    setSyncReviewOpen(true);
+  } catch (err) {
+    if (err.name === "AbortError") return;
+    setWorkStatus(String(err.message || err));
+    appendWorkLog(String(err.message || err));
+    setTimeout(hideWorkOverlay, 800);
+  }
+});
+
+async function applySelectedSync() {
+  if (!sessionId) return;
+  const selectedItems = selectedSyncItems();
+  if (!selectedItems.length) return;
+  setSyncReviewOpen(false);
+  showWorkOverlay({
+    title: "Sync TDD",
+    eyebrow: "Writing",
+    status: `Applying ${selectedItems.length} selected change${selectedItems.length === 1 ? "" : "s"}…`,
+  });
   try {
     await readSSE(
       `/api/sessions/${sessionId}/sync-tdd`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ summary, chatDigest }),
+        body: JSON.stringify({
+          summary: syncProposalMeta.summary,
+          chatDigest: syncProposalMeta.chatDigest,
+          selectedItems,
+        }),
       },
       (ev) => handleWorkEvent(ev),
     );
@@ -1831,6 +1969,21 @@ syncBtn.addEventListener("click", async () => {
     appendWorkLog(String(err.message || err));
     setTimeout(hideWorkOverlay, 800);
   }
+}
+
+syncReviewClose?.addEventListener("click", () => setSyncReviewOpen(false));
+syncReviewCancel?.addEventListener("click", () => setSyncReviewOpen(false));
+syncReviewOverlay?.addEventListener("click", (e) => {
+  if (e.target === syncReviewOverlay) setSyncReviewOpen(false);
+});
+syncReviewApply?.addEventListener("click", () => applySelectedSync());
+syncReviewAll?.addEventListener("click", () => {
+  for (const el of syncReviewList?.querySelectorAll("input[type=checkbox]") || []) el.checked = true;
+  updateSyncReviewCount();
+});
+syncReviewNone?.addEventListener("click", () => {
+  for (const el of syncReviewList?.querySelectorAll("input[type=checkbox]") || []) el.checked = false;
+  updateSyncReviewCount();
 });
 
 exportBtn.addEventListener("click", () => runExportBuild());

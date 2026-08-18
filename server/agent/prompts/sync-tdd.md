@@ -44,6 +44,10 @@ Update the canonical TDD so Unity can build from it. The operator pressed **Sync
 
 
 
+## Operator-approved checklist
+
+If a checklist is attached, **only** apply those items. Do not add extra mechanics, HUD, or input rows the operator left unchecked.
+
 ## New features from chat (minimap, inverted steer, new modes)
 
 

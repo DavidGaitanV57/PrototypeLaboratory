@@ -11,15 +11,17 @@ async function readPrompt(name) {
 }
 
 export async function loadPromptPack() {
-  const [quality, generateFinal, chat, chatAsk, syncTdd, genreLoop] = await Promise.all([
-    readPrompt("playable-quality.md"),
-    readPrompt("generate-final.md"),
-    readPrompt("chat.md"),
-    readPrompt("chat-ask.md"),
-    readPrompt("sync-tdd.md"),
-    readPrompt("genre-loop.md"),
-  ]);
-  return { quality, generateFinal, chat, chatAsk, syncTdd, genreLoop };
+  const [quality, generateFinal, chat, chatAsk, syncTdd, syncPreview, genreLoop] =
+    await Promise.all([
+      readPrompt("playable-quality.md"),
+      readPrompt("generate-final.md"),
+      readPrompt("chat.md"),
+      readPrompt("chat-ask.md"),
+      readPrompt("sync-tdd.md"),
+      readPrompt("sync-preview.md"),
+      readPrompt("genre-loop.md"),
+    ]);
+  return { quality, generateFinal, chat, chatAsk, syncTdd, syncPreview, genreLoop };
 }
 
 export function buildGenerateFinalPrompt({ slug, tddText, agentsMd, pack }) {
@@ -95,6 +97,43 @@ export function buildChatPrompt({
     .join("\n");
 }
 
+function evidenceList(gameplayFiles = []) {
+  return gameplayFiles.length > 0
+    ? gameplayFiles.map((f) => `- ${f}`).join("\n")
+    : "- public/gameplay/main.js\n- public/gameplay/config.js\n- public/gameplay/hud.js";
+}
+
+export function buildSyncPreviewPrompt({
+  slug,
+  tddText,
+  summary,
+  chatDigest,
+  gameplayFiles = [],
+  root,
+  pack,
+}) {
+  return [
+    pack.syncPreview,
+    "",
+    `Project root: ${root || "."}`,
+    `TDD path: docs/tdds/${slug}/TDD.md`,
+    "",
+    "## Operator summary",
+    summary || "List TDD updates implied by the current playable.",
+    "",
+    "## Chat / iteration digest",
+    chatDigest || "(Infer deltas from gameplay vs the TDD.)",
+    "",
+    "## Gameplay evidence — read these before proposing",
+    evidenceList(gameplayFiles),
+    "",
+    "## Current TDD",
+    tddText,
+    "",
+    "Do not write files. End with the JSON object only.",
+  ].join("\n");
+}
+
 export function buildSyncPrompt({
   slug,
   tddText,
@@ -104,12 +143,8 @@ export function buildSyncPrompt({
   root,
   agentsMd,
   pack,
+  selectedItems = "",
 }) {
-  const evidenceList =
-    gameplayFiles.length > 0
-      ? gameplayFiles.map((f) => `- ${f}`).join("\n")
-      : "- public/gameplay/main.js\n- public/gameplay/config.js\n- public/gameplay/hud.js";
-
   return [
     agentsMd,
     "",
@@ -121,11 +156,15 @@ export function buildSyncPrompt({
     "## Operator summary",
     summary || "Promote validated prototype changes into the TDD product spec.",
     "",
+    "## Operator-approved checklist — apply ONLY these items",
+    selectedItems ||
+      "(No checklist provided — infer from digest + gameplay, but prefer chat-validated features.)",
+    "",
     "## Validated change digest (chat + iteration the operator approved)",
     chatDigest || "(Read gameplay evidence and infer deltas vs the TDD below.)",
     "",
     "## Gameplay evidence — read ALL of these before editing the TDD",
-    evidenceList,
+    evidenceList(gameplayFiles),
     "",
     "Do not copy file paths or web stack names into the TDD. Extract product rules only.",
     "",
