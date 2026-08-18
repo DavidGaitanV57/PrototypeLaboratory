@@ -117,6 +117,88 @@ export async function createSession({ root, tddsRoot, slug }) {
   let chatHistory = [];
   /** @type {string} */
   let lastAdviceDigest = "";
+  /** @type {{ messages: object[], turn: number, writeMode: string, model: string, mode: string, op: string, at: number } | null} */
+  let checkpoint = null;
+  /** @type {{ mode: string, op: string }} */
+  let runMeta = { mode: "agent", op: "chat" };
+
+  function captureCheckpoint(meta = runMeta) {
+    const cp = activeProvider?.getCheckpoint?.();
+    if (!cp?.messages?.length || !activeProvider?.supportsCheckpoint) return null;
+    let writeMode = "chat";
+    if (meta.op === "generate") writeMode = "generate";
+    else if (meta.op === "sync") writeMode = "sync";
+    else if (meta.mode === "ask" || meta.op === "ask") writeMode = "ask";
+    else if (cp.writeMode) writeMode = cp.writeMode;
+    checkpoint = {
+      messages: cp.messages,
+      turn: cp.turn || 1,
+      writeMode,
+      model: cp.model,
+      mode: meta.mode || "agent",
+      op: meta.op || "chat",
+      at: cp.at || Date.now(),
+    };
+    return checkpoint;
+  }
+
+  function checkpointInfo() {
+    if (!checkpoint?.messages?.length) return { resumable: false };
+    return {
+      resumable: true,
+      turn: checkpoint.turn,
+      mode: checkpoint.mode,
+      op: checkpoint.op,
+      model: checkpoint.model,
+      at: checkpoint.at,
+    };
+  }
+
+  async function runProvider(prompt, { writeMode, op, mode, onEvent, resume } = {}) {
+    const picked = await pickProvider(root, { writeMode, slug });
+    activeProvider = picked.provider;
+    handlersStatus(picked, mode, op, onEvent, resume);
+    const wrapped = wrapEvents({
+      root,
+      op: op || (mode === "ask" ? "ask" : "chat"),
+      slug,
+      picked,
+      onEvent,
+    });
+    if (resume?.messages) {
+      return picked.provider.run("", {
+        onEvent: wrapped,
+        signal: controller.signal,
+        resumeMessages: resume.messages,
+        resumeTurn: resume.turn,
+      });
+    }
+    return picked.provider.run(prompt, {
+      onEvent: wrapped,
+      signal: controller.signal,
+    });
+  }
+
+  function handlersStatus(picked, mode, op, onEvent, resume) {
+    if (resume) {
+      onEvent?.({
+        type: "status",
+        message: `Continue · ${picked.label || picked.id} · ${picked.model} · turn ${(resume.turn || 1) + 1}+`,
+      });
+      return;
+    }
+    if (op === "generate") {
+      onEvent?.({
+        type: "status",
+        message: `Provider ${picked.id} · model ${picked.model}`,
+      });
+      return;
+    }
+    onEvent?.({
+      type: "status",
+      message: `${picked.label || picked.id} · ${picked.model} · ${mode === "ask" ? "Ask" : "Agent"}`,
+    });
+  }
 
   return {
     slug,
@@ -130,36 +212,33 @@ export async function createSession({ root, tddsRoot, slug }) {
     get lastAdviceDigest() {
       return lastAdviceDigest;
     },
+    getCheckpointInfo() {
+      return checkpointInfo();
+    },
     async generateFinal(handlers = {}) {
       if (busy) throw new Error("Session busy");
       busy = true;
       controller = new AbortController();
+      runMeta = { mode: "agent", op: "generate" };
       try {
         const tdd = await readTdd(tddsRoot, slug);
-        const picked = await pickProvider(root, { writeMode: "generate", slug });
-        activeProvider = picked.provider;
-        handlers.onEvent?.({
-          type: "status",
-          message: `Provider ${picked.id} · model ${picked.model}`,
-        });
         const prompt = buildGenerateFinalPrompt({
           slug,
           tddText: tdd.text,
           agentsMd,
           pack,
         });
-        const onEvent = wrapEvents({
-          root,
+        const result = await runProvider(prompt, {
+          writeMode: "generate",
           op: "generate",
-          slug,
-          picked,
+          mode: "agent",
           onEvent: handlers.onEvent,
         });
-        const result = await picked.provider.run(prompt, {
-          onEvent,
-          signal: controller.signal,
-        });
-        // Soft advice AFTER write — never blocks ready
+        if (result?.status === "cancelled" || result?.resumable) {
+          captureCheckpoint(runMeta);
+          return result;
+        }
+        checkpoint = null;
         const report = await emitSoftAdvice({
           root,
           tddsRoot,
@@ -168,7 +247,13 @@ export async function createSession({ root, tddsRoot, slug }) {
         });
         lastAdviceDigest = formatAdviceForChat(report?.advice || []);
         return result;
+      } catch (err) {
+        captureCheckpoint(runMeta);
+        throw err;
       } finally {
+        if (activeProvider?.getCheckpoint?.()?.messages?.length) {
+          captureCheckpoint(runMeta);
+        }
         busy = false;
         controller = null;
         activeProvider = null;
@@ -180,6 +265,7 @@ export async function createSession({ root, tddsRoot, slug }) {
       controller = new AbortController();
       const trimmed = String(message || "").trim();
       const mode = handlers.mode === "ask" ? "ask" : "agent";
+      runMeta = { mode, op: mode === "ask" ? "ask" : "chat" };
       if (trimmed) {
         chatHistory.push({
           role: "user",
@@ -196,12 +282,6 @@ export async function createSession({ root, tddsRoot, slug }) {
           /* optional */
         }
         const writeMode = mode === "ask" ? "ask" : "chat";
-        const picked = await pickProvider(root, { writeMode, slug });
-        activeProvider = picked.provider;
-        handlers.onEvent?.({
-          type: "status",
-          message: `${picked.label || picked.id} · ${picked.model} · ${mode === "ask" ? "Ask" : "Agent"}`,
-        });
         const prompt = buildChatPrompt({
           slug,
           message: trimmed,
@@ -211,17 +291,17 @@ export async function createSession({ root, tddsRoot, slug }) {
           adviceDigest: lastAdviceDigest,
           mode,
         });
-        const onEvent = wrapEvents({
-          root,
+        const result = await runProvider(prompt, {
+          writeMode,
           op: mode === "ask" ? "ask" : "chat",
-          slug,
-          picked,
+          mode,
           onEvent: handlers.onEvent,
         });
-        const result = await picked.provider.run(prompt, {
-          onEvent,
-          signal: controller.signal,
-        });
+        if (result?.status === "cancelled" || result?.resumable) {
+          captureCheckpoint(runMeta);
+          return { result, mode, resumable: true };
+        }
+        checkpoint = null;
         if (mode !== "ask") {
           const report = await emitSoftAdvice({
             root,
@@ -232,7 +312,58 @@ export async function createSession({ root, tddsRoot, slug }) {
           lastAdviceDigest = formatAdviceForChat(report?.advice || []);
         }
         return { result, mode };
+      } catch (err) {
+        captureCheckpoint(runMeta);
+        throw err;
       } finally {
+        if (activeProvider?.getCheckpoint?.()?.messages?.length) {
+          captureCheckpoint(runMeta);
+        }
+        busy = false;
+        controller = null;
+        activeProvider = null;
+      }
+    },
+    async continueFromCheckpoint(handlers = {}) {
+      if (busy) throw new Error("Session busy");
+      if (!checkpoint?.messages?.length) {
+        throw new Error("No checkpoint — Stop an LLM run first (Cursor cannot resume mid-run)");
+      }
+      busy = true;
+      controller = new AbortController();
+      const cp = checkpoint;
+      runMeta = { mode: cp.mode || "agent", op: cp.op || "chat" };
+      try {
+        const result = await runProvider("", {
+          writeMode: cp.writeMode || "chat",
+          op: cp.op,
+          mode: cp.mode,
+          onEvent: handlers.onEvent,
+          resume: { messages: cp.messages, turn: cp.turn },
+        });
+        if (result?.status === "cancelled" || result?.resumable) {
+          captureCheckpoint(runMeta);
+          return { result, mode: cp.mode, resumable: true, continued: true };
+        }
+        checkpoint = null;
+        activeProvider?.clearCheckpoint?.();
+        if (cp.mode !== "ask" && cp.op !== "ask") {
+          const report = await emitSoftAdvice({
+            root,
+            tddsRoot,
+            slug,
+            onEvent: handlers.onEvent,
+          });
+          lastAdviceDigest = formatAdviceForChat(report?.advice || []);
+        }
+        return { result, mode: cp.mode, continued: true };
+      } catch (err) {
+        captureCheckpoint(runMeta);
+        throw err;
+      } finally {
+        if (activeProvider?.getCheckpoint?.()?.messages?.length) {
+          captureCheckpoint(runMeta);
+        }
         busy = false;
         controller = null;
         activeProvider = null;
@@ -242,12 +373,11 @@ export async function createSession({ root, tddsRoot, slug }) {
       if (busy) throw new Error("Session busy");
       busy = true;
       controller = new AbortController();
+      runMeta = { mode: "agent", op: "sync" };
       try {
         const tdd = await readTdd(tddsRoot, slug);
         const gameplayFiles = await listGameplayFiles(root);
         const digest = mergeChatDigest(chatHistory, chatDigest);
-        const picked = await pickProvider(root, { writeMode: "sync", slug });
-        activeProvider = picked.provider;
         const prompt = buildSyncPrompt({
           slug,
           tddText: tdd.text,
@@ -262,18 +392,25 @@ export async function createSession({ root, tddsRoot, slug }) {
           agentsMd,
           pack,
         });
-        await picked.provider.run(prompt, {
-          onEvent: wrapEvents({
-            root,
-            op: "sync",
-            slug,
-            picked,
-            onEvent: handlers.onEvent,
-          }),
-          signal: controller.signal,
+        const result = await runProvider(prompt, {
+          writeMode: "sync",
+          op: "sync",
+          mode: "agent",
+          onEvent: handlers.onEvent,
         });
+        if (result?.status === "cancelled" || result?.resumable) {
+          captureCheckpoint(runMeta);
+          return result;
+        }
+        checkpoint = null;
         return await finalizeTddSync(tddsRoot, slug);
+      } catch (err) {
+        captureCheckpoint(runMeta);
+        throw err;
       } finally {
+        if (activeProvider?.getCheckpoint?.()?.messages?.length) {
+          captureCheckpoint(runMeta);
+        }
         busy = false;
         controller = null;
         activeProvider = null;
@@ -282,6 +419,8 @@ export async function createSession({ root, tddsRoot, slug }) {
     cancel() {
       controller?.abort?.();
       activeProvider?.cancel?.();
+      captureCheckpoint(runMeta);
+      return checkpointInfo();
     },
   };
 }

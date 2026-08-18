@@ -607,6 +607,12 @@ input[type="text"] {
   flex-shrink: 0;
 }
 
+.chat-continue {
+  width: 100%;
+  margin-top: 0.45rem;
+  flex-shrink: 0;
+}
+
 /* Cursor-like provider/model picker */
 .model-picker {
   position: relative;

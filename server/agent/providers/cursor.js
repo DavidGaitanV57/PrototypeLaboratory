@@ -50,6 +50,10 @@ export function createCursorProvider({ root, apiKey, model, writeMode = "generat
 
   return {
     id: "cursor",
+    supportsCheckpoint: false,
+    getCheckpoint() {
+      return null;
+    },
     model: modelId,
     async run(prompt, { onEvent, signal } = {}) {
       aborted = false;

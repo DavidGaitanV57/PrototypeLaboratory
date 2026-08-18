@@ -57,10 +57,36 @@ function backoffMs(attempt) {
   return exp + jitter;
 }
 
+function cloneMessages(messages) {
+  return JSON.parse(JSON.stringify(messages || []));
+}
+
+/** Ensure every assistant tool_call has a matching tool result (API requires it). */
+function sealToolResults(messages) {
+  const out = cloneMessages(messages);
+  const pending = new Set();
+  for (const m of out) {
+    if (m.role === "assistant" && Array.isArray(m.tool_calls)) {
+      for (const c of m.tool_calls) {
+        if (c?.id) pending.add(c.id);
+      }
+    }
+    if (m.role === "tool" && m.tool_call_id) pending.delete(m.tool_call_id);
+  }
+  for (const id of pending) {
+    out.push({
+      role: "tool",
+      tool_call_id: id,
+      content: "ERROR: Stopped by user before tool finished",
+    });
+  }
+  return out;
+}
+
 /**
  * OpenAI-compatible tool-calling provider.
  * Keeps going through transient network/API failures until the model finishes
- * or the operator hits Stop.
+ * or the operator hits Stop. Snapshots messages for Continue-after-Stop.
  */
 export function createLlmProvider({
   root,
@@ -72,6 +98,8 @@ export function createLlmProvider({
 }) {
   let aborted = false;
   const ctrl = { current: null };
+  /** @type {{ messages: object[], turn: number, writeMode: string, model: string, at: number } | null} */
+  let checkpoint = null;
 
   const readTools = [
     {
@@ -141,9 +169,26 @@ export function createLlmProvider({
     throw new Error(`Unknown tool ${name}`);
   }
 
+  function saveCheckpoint(messages, turn) {
+    checkpoint = {
+      messages: sealToolResults(messages),
+      turn: Math.max(1, turn || 1),
+      writeMode,
+      model,
+      at: Date.now(),
+    };
+  }
+
   return {
     id: "llm",
-    async run(prompt, { onEvent, signal } = {}) {
+    supportsCheckpoint: true,
+    getCheckpoint() {
+      return checkpoint ? { ...checkpoint, messages: cloneMessages(checkpoint.messages) } : null;
+    },
+    clearCheckpoint() {
+      checkpoint = null;
+    },
+    async run(prompt, { onEvent, signal, resumeMessages, resumeTurn } = {}) {
       aborted = false;
       const ac = new AbortController();
       ctrl.current = ac;
@@ -156,17 +201,31 @@ export function createLlmProvider({
 
       const meter = createRunMeter();
       const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+      const resuming = Array.isArray(resumeMessages) && resumeMessages.length >= 2;
 
-      const messages = [
-        {
-          role: "system",
+      const messages = resuming
+        ? sealToolResults(resumeMessages)
+        : [
+            {
+              role: "system",
+              content:
+                writeMode === "ask"
+                  ? "You answer questions about an existing playable prototype. Read-only tools only. Match answer length to the question: short factual questions get short human answers — no file dumps, audits, or verification checklists unless asked."
+                  : "You are a gameplay prototyping agent. Use tools to read/write files. Obey write policy in the user prompt. Keep working until the task is complete — do not stop early.",
+            },
+            { role: "user", content: prompt },
+          ];
+
+      if (resuming) {
+        messages.push({
+          role: "user",
           content:
-            writeMode === "ask"
-              ? "You answer questions about an existing playable prototype. Read-only tools only. Match answer length to the question: short factual questions get short human answers — no file dumps, audits, or verification checklists unless asked."
-              : "You are a gameplay prototyping agent. Use tools to read/write files. Obey write policy in the user prompt. Keep working until the task is complete — do not stop early.",
-        },
-        { role: "user", content: prompt },
-      ];
+            "Continue from this checkpoint. Finish remaining work. Do not redo completed writes unless they are broken.",
+        });
+      }
+
+      let turn = resuming ? Math.max(0, Number(resumeTurn) || 0) : 0;
+      saveCheckpoint(messages, Math.max(1, turn || 1));
 
       const emitBenchmark = (status, errorMessage) => {
         onEvent?.(
@@ -181,7 +240,20 @@ export function createLlmProvider({
         );
       };
 
-      async function fetchCompletion(turn) {
+      const emitCancelled = () => {
+        saveCheckpoint(messages, turn);
+        onEvent?.({
+          type: "checkpoint",
+          resumable: true,
+          turn: checkpoint.turn,
+          writeMode,
+          model,
+        });
+        emitBenchmark("cancelled");
+        onEvent?.({ type: "done", status: "cancelled", resumable: true });
+      };
+
+      async function fetchCompletion(turnNo) {
         let attempt = 0;
         while (!aborted) {
           attempt += 1;
@@ -227,15 +299,15 @@ export function createLlmProvider({
             if (aborted || ac.signal.aborted || isAbortError(err)) {
               throw Object.assign(new Error("Stopped"), { name: "AbortError" });
             }
-            // Per-turn timeout or transient network — keep the run alive
             if (isRetryableNetwork(err) || turnAc.signal.aborted) {
               const wait = backoffMs(attempt);
-              const why = turnAc.signal.aborted && !ac.signal.aborted
-                ? "request timed out"
-                : err.message || "fetch failed";
+              const why =
+                turnAc.signal.aborted && !ac.signal.aborted
+                  ? "request timed out"
+                  : err.message || "fetch failed";
               onEvent?.({
                 type: "status",
-                message: `${why} — retry ${attempt} in ${(wait / 1000).toFixed(1)}s (turn ${turn}, Stop to cancel)`,
+                message: `${why} — retry ${attempt} in ${(wait / 1000).toFixed(1)}s (turn ${turnNo}, Stop to cancel)`,
               });
               await sleep(wait, ac.signal);
               continue;
@@ -250,13 +322,21 @@ export function createLlmProvider({
       }
 
       try {
-        let turn = 0;
+        if (resuming) {
+          onEvent?.({
+            type: "status",
+            message: `Resuming checkpoint · ${model} · turn ${turn || 1}+`,
+          });
+        }
+
         while (!aborted) {
           turn += 1;
           onEvent?.({
             type: "status",
-            message: turn === 1 ? `LLM · ${model}` : `LLM turn ${turn}…`,
+            message:
+              turn === 1 && !resuming ? `LLM · ${model}` : `LLM turn ${turn}…`,
           });
+          saveCheckpoint(messages, turn);
 
           const data = await fetchCompletion(turn);
           meter.noteTurn(data.usage);
@@ -270,6 +350,7 @@ export function createLlmProvider({
             continue;
           }
           messages.push(msg);
+          saveCheckpoint(messages, turn);
 
           if (msg.content) {
             const cleaned = String(msg.content)
@@ -283,6 +364,7 @@ export function createLlmProvider({
 
           const calls = msg.tool_calls || [];
           if (!calls.length) {
+            checkpoint = null;
             emitBenchmark("finished");
             onEvent?.({ type: "done", status: "finished" });
             return data;
@@ -316,16 +398,17 @@ export function createLlmProvider({
               content: String(result).slice(0, 120000),
             });
           }
+          saveCheckpoint(messages, turn);
         }
 
-        emitBenchmark("cancelled");
-        onEvent?.({ type: "done", status: "cancelled" });
+        emitCancelled();
+        return { status: "cancelled", resumable: true };
       } catch (err) {
         if (aborted || isAbortError(err)) {
-          emitBenchmark("cancelled");
-          onEvent?.({ type: "done", status: "cancelled" });
-          return;
+          emitCancelled();
+          return { status: "cancelled", resumable: true };
         }
+        saveCheckpoint(messages, turn);
         emitBenchmark("error", err?.message || err);
         throw err;
       } finally {

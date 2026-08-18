@@ -257,13 +257,60 @@ app.post("/api/sessions/:id/chat", async (req, res) => {
       mode,
       onEvent: (ev) => send(ev),
     });
-    if (mode !== "ask") broadcastReload("chat");
-    send({ type: "done", mode: outcome?.mode || mode });
+    if (mode !== "ask" && !outcome?.resumable) broadcastReload("chat");
+    send({
+      type: "done",
+      mode: outcome?.mode || mode,
+      resumable: !!outcome?.resumable,
+      ...(session.getCheckpointInfo?.() || {}),
+    });
   } catch (err) {
     send({ type: "error", message: err.message || String(err) });
   } finally {
     res.end();
   }
+});
+
+app.post("/api/sessions/:id/continue", async (req, res) => {
+  const session = sessions.get(req.params.id);
+  const send = sseInit(res);
+  if (!session) {
+    send({ type: "error", message: "Unknown session" });
+    return res.end();
+  }
+  try {
+    const outcome = await session.continueFromCheckpoint({
+      onEvent: (ev) => send(ev),
+    });
+    const mode = outcome?.mode || "agent";
+    if (mode !== "ask" && !outcome?.resumable) broadcastReload("chat");
+    send({
+      type: "done",
+      mode,
+      continued: true,
+      resumable: !!outcome?.resumable,
+      ...(session.getCheckpointInfo?.() || {}),
+    });
+  } catch (err) {
+    send({ type: "error", message: err.message || String(err) });
+  } finally {
+    res.end();
+  }
+});
+
+app.get("/api/sessions/:id/checkpoint", (req, res) => {
+  const session = sessions.get(req.params.id);
+  if (!session) return res.status(404).json({ resumable: false, error: "Unknown session" });
+  res.json(session.getCheckpointInfo?.() || { resumable: false });
+});
+
+app.post("/api/sessions/:id/cancel", async (req, res) => {
+  const session = sessions.get(req.params.id);
+  const info = session?.cancel?.() || { resumable: false };
+  // Give the provider a tick to seal the snapshot after abort
+  await new Promise((r) => setTimeout(r, 80));
+  const latest = session?.getCheckpointInfo?.() || info;
+  res.json({ ok: true, ...latest });
 });
 
 app.post("/api/sessions/:id/sync-tdd", async (req, res) => {
@@ -286,12 +333,6 @@ app.post("/api/sessions/:id/sync-tdd", async (req, res) => {
   } finally {
     res.end();
   }
-});
-
-app.post("/api/sessions/:id/cancel", async (req, res) => {
-  const session = sessions.get(req.params.id);
-  session?.cancel?.();
-  res.json({ ok: true });
 });
 
 app.post("/api/workspace/clean", async (_req, res) => {

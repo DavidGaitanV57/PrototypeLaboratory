@@ -23,6 +23,7 @@ const chatClose = document.getElementById("chatClose");
 const chatLog = document.getElementById("chatLog");
 const chatForm = document.getElementById("chatForm");
 const chatInput = document.getElementById("chatInput");
+const chatContinueBtn = document.getElementById("chatContinueBtn");
 const chatProviderSelect = document.getElementById("chatProviderSelect");
 const chatModelSelect = document.getElementById("chatModelSelect");
 const chatModelCustom = document.getElementById("chatModelCustom");
@@ -393,6 +394,8 @@ function createChatRunCollector(userMessage = "") {
   let hadError = false;
   let errorMessage = "";
   let mode = "agent";
+  let resumable = false;
+  let checkpointTurn = null;
   const userNorm = stripModeEcho(userMessage).toLowerCase();
 
   function isUserEcho(text) {
@@ -411,7 +414,17 @@ function createChatRunCollector(userMessage = "") {
         hadError = true;
         errorMessage = String(ev.message);
       }
-      if (ev.type === "done" && ev.mode) mode = ev.mode;
+      if (ev.type === "checkpoint" && ev.resumable) {
+        resumable = true;
+        if (ev.turn) checkpointTurn = ev.turn;
+      }
+      if (ev.type === "done") {
+        if (ev.mode) mode = ev.mode;
+        if (ev.resumable) {
+          resumable = true;
+          if (ev.turn) checkpointTurn = ev.turn;
+        }
+      }
       if (ev.type === "assistant" && ev.text) {
         const t = sanitizeAgentText(ev.text);
         if (t && !isUserEcho(t)) assistantChunks.push(t);
@@ -457,6 +470,9 @@ function createChatRunCollector(userMessage = "") {
         parts.push(files.length === 1 ? `File updated:\n${list}` : `Files updated:\n${list}`);
       }
       if (!parts.length) {
+        if (resumable) {
+          return `Stopped — checkpoint ready${checkpointTurn ? ` (turn ${checkpointTurn})` : ""}. Press Continue to resume.`;
+        }
         if (mode === "ask") {
           return "Ask finished with no readable reply. Try again or switch provider/model.";
         }
@@ -472,6 +488,12 @@ function createChatRunCollector(userMessage = "") {
     },
     get files() {
       return [...writtenFiles];
+    },
+    get resumable() {
+      return resumable;
+    },
+    get checkpointTurn() {
+      return checkpointTurn;
     },
   };
 }
@@ -550,15 +572,52 @@ async function cancelActiveWork() {
   workStopBtn.disabled = true;
   setWorkStatus("Stopping…");
   if (controller) controller.abort();
+  let checkpoint = null;
   if (id) {
     try {
-      await fetch(`/api/sessions/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+      const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/cancel`, {
+        method: "POST",
+      });
+      checkpoint = await res.json().catch(() => null);
     } catch {
       /* client abort is enough */
     }
   }
   appendWorkLog("Stopped by user");
-  setTimeout(hideWorkOverlay, 200);
+  if (checkpoint?.resumable) {
+    setWorkStatus(`Stopped — Continue available (turn ${checkpoint.turn || "?"})`);
+    setChatContinueVisible(checkpoint);
+    appendChat(
+      "sys",
+      `Stopped. Checkpoint saved at turn ${checkpoint.turn || "?"}. Press Continue in chat to resume.`,
+    );
+    setChatOpen(true);
+  }
+  setTimeout(hideWorkOverlay, checkpoint?.resumable ? 600 : 200);
+}
+
+function setChatContinueVisible(info) {
+  if (!chatContinueBtn) return;
+  const ok = !!(info && info.resumable);
+  chatContinueBtn.hidden = !ok;
+  if (ok) {
+    const turn = info.turn ? ` · turn ${info.turn}` : "";
+    chatContinueBtn.textContent = `Continue checkpoint${turn}`;
+  }
+}
+
+async function refreshCheckpointButton() {
+  if (!chatContinueBtn || !sessionId) {
+    setChatContinueVisible(null);
+    return;
+  }
+  try {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/checkpoint`);
+    const data = await res.json();
+    setChatContinueVisible(data);
+  } catch {
+    setChatContinueVisible(null);
+  }
 }
 
 async function readSSE(url, options, onEvent) {
@@ -1629,6 +1688,7 @@ chatForm.addEventListener("submit", async (e) => {
   if (!message) return;
   chatInput.value = "";
   appendChat("user", message, { mode: chatMode });
+  setChatContinueVisible(null);
   const runNotes = createChatRunCollector(message);
   showWorkOverlay({
     title: chatMode === "ask" ? "Ask (read-only)" : "Chat iteration",
@@ -1656,8 +1716,14 @@ chatForm.addEventListener("submit", async (e) => {
     );
     hideWorkOverlay();
     const reply = runNotes.buildReply();
+    if (runNotes.resumable) {
+      setChatContinueVisible({ resumable: true, turn: runNotes.checkpointTurn });
+      appendChat("assistant", reply);
+      await refreshCheckpointButton();
+      return;
+    }
+    setChatContinueVisible(null);
     if (chatMode === "agent" && !chatFailed && !runNotes.hadError && runNotes.wroteFiles) {
-      // Sibling ES modules stay cached on soft remount — hard reload + continue playable.
       schedulePlayableReload({
         assistantReply: reply,
         openChat: true,
@@ -1670,11 +1736,71 @@ chatForm.addEventListener("submit", async (e) => {
     appendChat("assistant", reply);
   } catch (err) {
     if (err.name === "AbortError") {
-      appendChat("sys", "Stopped");
+      await new Promise((r) => setTimeout(r, 150));
+      await refreshCheckpointButton();
       return;
     }
     appendChat("sys", String(err.message || err));
     hideWorkOverlay();
+  }
+});
+
+chatContinueBtn?.addEventListener("click", async () => {
+  if (!sessionId) return appendChat("sys", "No session to continue.");
+  setChatContinueVisible(null);
+  appendChat("sys", "Continuing from checkpoint…");
+  const runNotes = createChatRunCollector("");
+  showWorkOverlay({
+    title: "Continue checkpoint",
+    eyebrow: "Resume",
+    status: "Resuming LLM…",
+  });
+  try {
+    let chatFailed = false;
+    let mode = chatMode;
+    await readSSE(
+      `/api/sessions/${sessionId}/continue`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      },
+      (ev) => {
+        if (ev?.type === "error") chatFailed = true;
+        if (ev?.type === "done" && ev.mode) mode = ev.mode;
+        runNotes.ingest(ev);
+        handleWorkEvent(ev, { chat: true });
+      },
+    );
+    hideWorkOverlay();
+    const reply = runNotes.buildReply();
+    if (runNotes.resumable) {
+      setChatContinueVisible({ resumable: true, turn: runNotes.checkpointTurn });
+      appendChat("assistant", reply);
+      await refreshCheckpointButton();
+      return;
+    }
+    setChatContinueVisible(null);
+    if (mode !== "ask" && !chatFailed && !runNotes.hadError && runNotes.wroteFiles) {
+      schedulePlayableReload({
+        assistantReply: reply,
+        openChat: true,
+      });
+      return;
+    }
+    if (mode !== "ask" && !chatFailed && !runNotes.hadError) {
+      await mountGame();
+    }
+    appendChat("assistant", reply || "Continued and finished.");
+  } catch (err) {
+    if (err.name === "AbortError") {
+      await new Promise((r) => setTimeout(r, 150));
+      await refreshCheckpointButton();
+      return;
+    }
+    appendChat("sys", String(err.message || err));
+    hideWorkOverlay();
+    await refreshCheckpointButton();
   }
 });
 
