@@ -1129,6 +1129,7 @@ function setChatMode(mode, { close = true } = {}) {
   }
   chatModeAgent?.classList.toggle("is-active", chatMode === "agent");
   chatModeAsk?.classList.toggle("is-active", chatMode === "ask");
+  chatDrawer?.classList.toggle("chat-drawer--ask", chatMode === "ask");
   if (chatModeTriggerText) {
     chatModeTriggerText.textContent = chatMode === "ask" ? "Ask" : "Agent";
   }
