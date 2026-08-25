@@ -18,6 +18,7 @@ import {
   formatSelectedSyncItems,
   listGameplayFiles,
   mergeChatDigest,
+  parseChatPlan,
   parseSyncProposal,
 } from "./gameplayEvidence.js";
 import {
@@ -135,6 +136,7 @@ export async function createSession({ root, tddsRoot, slug }) {
     if (meta.op === "generate") writeMode = "generate";
     else if (meta.op === "sync") writeMode = "sync";
     else if (meta.mode === "ask" || meta.op === "ask") writeMode = "ask";
+    else if (meta.mode === "plan" || meta.op === "plan") writeMode = "plan";
     else if (cp.writeMode) writeMode = cp.writeMode;
     checkpoint = {
       messages: cp.messages,
@@ -166,7 +168,7 @@ export async function createSession({ root, tddsRoot, slug }) {
     handlersStatus(picked, mode, op, onEvent, resume);
     const wrapped = wrapEvents({
       root,
-      op: op || (mode === "ask" ? "ask" : "chat"),
+      op: op || (mode === "ask" || mode === "plan" ? mode : "chat"),
       slug,
       picked,
       onEvent,
@@ -202,7 +204,9 @@ export async function createSession({ root, tddsRoot, slug }) {
     }
     onEvent?.({
       type: "status",
-      message: `${picked.label || picked.id} · ${picked.model} · ${mode === "ask" ? "Ask" : "Agent"}`,
+      message: `${picked.label || picked.id} · ${picked.model} · ${
+        mode === "ask" ? "Ask" : mode === "plan" ? "Plan" : "Agent"
+      }`,
     });
   }
 
@@ -270,8 +274,10 @@ export async function createSession({ root, tddsRoot, slug }) {
       busy = true;
       controller = new AbortController();
       const trimmed = String(message || "").trim();
-      const mode = handlers.mode === "ask" ? "ask" : "agent";
-      runMeta = { mode, op: mode === "ask" ? "ask" : "chat" };
+      const mode =
+        handlers.mode === "ask" ? "ask" : handlers.mode === "plan" ? "plan" : "agent";
+      const readOnly = mode === "ask" || mode === "plan";
+      runMeta = { mode, op: readOnly ? mode : "chat" };
       if (trimmed) {
         chatHistory.push({
           role: "user",
@@ -287,7 +293,7 @@ export async function createSession({ root, tddsRoot, slug }) {
         } catch {
           /* optional */
         }
-        const writeMode = mode === "ask" ? "ask" : "chat";
+        const writeMode = readOnly ? mode : "chat";
         const prompt = buildChatPrompt({
           slug,
           message: trimmed,
@@ -297,18 +303,25 @@ export async function createSession({ root, tddsRoot, slug }) {
           adviceDigest: lastAdviceDigest,
           mode,
         });
+        const assistantChunks = [];
+        const onEvent = (ev) => {
+          if (mode === "plan" && ev?.type === "assistant" && ev.text) {
+            assistantChunks.push(String(ev.text));
+          }
+          handlers.onEvent?.(ev);
+        };
         const result = await runProvider(prompt, {
           writeMode,
-          op: mode === "ask" ? "ask" : "chat",
+          op: readOnly ? mode : "chat",
           mode,
-          onEvent: handlers.onEvent,
+          onEvent,
         });
         if (result?.status === "cancelled" || result?.resumable) {
           captureCheckpoint(runMeta);
           return { result, mode, resumable: true };
         }
         checkpoint = null;
-        if (mode !== "ask") {
+        if (!readOnly) {
           const report = await emitSoftAdvice({
             root,
             tddsRoot,
@@ -317,7 +330,12 @@ export async function createSession({ root, tddsRoot, slug }) {
           });
           lastAdviceDigest = formatAdviceForChat(report?.advice || []);
         }
-        return { result, mode };
+        let plan = null;
+        if (mode === "plan") {
+          plan = parseChatPlan(assistantChunks.join("\n\n"));
+          handlers.onEvent?.({ type: "plan-proposal", ...plan });
+        }
+        return { result, mode, plan };
       } catch (err) {
         captureCheckpoint(runMeta);
         throw err;
@@ -340,11 +358,18 @@ export async function createSession({ root, tddsRoot, slug }) {
       const cp = checkpoint;
       runMeta = { mode: cp.mode || "agent", op: cp.op || "chat" };
       try {
+        const assistantChunks = [];
+        const onEvent = (ev) => {
+          if (cp.mode === "plan" && ev?.type === "assistant" && ev.text) {
+            assistantChunks.push(String(ev.text));
+          }
+          handlers.onEvent?.(ev);
+        };
         const result = await runProvider("", {
           writeMode: cp.writeMode || "chat",
           op: cp.op,
           mode: cp.mode,
-          onEvent: handlers.onEvent,
+          onEvent,
           resume: { messages: cp.messages, turn: cp.turn },
         });
         if (result?.status === "cancelled" || result?.resumable) {
@@ -353,7 +378,7 @@ export async function createSession({ root, tddsRoot, slug }) {
         }
         checkpoint = null;
         activeProvider?.clearCheckpoint?.();
-        if (cp.mode !== "ask" && cp.op !== "ask") {
+        if (cp.mode !== "ask" && cp.mode !== "plan" && cp.op !== "ask" && cp.op !== "plan") {
           const report = await emitSoftAdvice({
             root,
             tddsRoot,
@@ -362,7 +387,12 @@ export async function createSession({ root, tddsRoot, slug }) {
           });
           lastAdviceDigest = formatAdviceForChat(report?.advice || []);
         }
-        return { result, mode: cp.mode, continued: true };
+        let plan = null;
+        if (cp.mode === "plan") {
+          plan = parseChatPlan(assistantChunks.join("\n\n"));
+          handlers.onEvent?.({ type: "plan-proposal", ...plan });
+        }
+        return { result, mode: cp.mode, continued: true, plan };
       } catch (err) {
         captureCheckpoint(runMeta);
         throw err;

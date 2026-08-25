@@ -11,17 +11,27 @@ async function readPrompt(name) {
 }
 
 export async function loadPromptPack() {
-  const [quality, generateFinal, chat, chatAsk, syncTdd, syncPreview, genreLoop] =
+  const [quality, generateFinal, chat, chatAsk, chatPlan, syncTdd, syncPreview, genreLoop] =
     await Promise.all([
       readPrompt("playable-quality.md"),
       readPrompt("generate-final.md"),
       readPrompt("chat.md"),
       readPrompt("chat-ask.md"),
+      readPrompt("chat-plan.md"),
       readPrompt("sync-tdd.md"),
       readPrompt("sync-preview.md"),
       readPrompt("genre-loop.md"),
     ]);
-  return { quality, generateFinal, chat, chatAsk, syncTdd, syncPreview, genreLoop };
+  return {
+    quality,
+    generateFinal,
+    chat,
+    chatAsk,
+    chatPlan,
+    syncTdd,
+    syncPreview,
+    genreLoop,
+  };
 }
 
 export function buildGenerateFinalPrompt({ slug, tddText, agentsMd, pack }) {
@@ -55,18 +65,18 @@ export function buildChatPrompt({
   mode = "agent",
 }) {
   const ask = mode === "ask";
-  const chatRules = ask ? pack.chatAsk : pack.chat;
+  const plan = mode === "plan";
 
-  // Ask: keep context light so the model answers the question, not a full design audit.
-  if (ask) {
+  if (ask || plan) {
+    const chatRules = plan ? pack.chatPlan : pack.chatAsk;
     return [
       chatRules,
       "",
-      `## Mode: ASK (read-only)`,
-      `Do not write or modify any files. TDD slug: ${slug}.`,
-      "Read gameplay/TDD only as needed to answer. Match reply length to the question.",
+      plan
+        ? `## Mode: PLAN (read-only)\nDo not write files. End with the JSON plan object only (no code). TDD slug: ${slug}.`
+        : `## Mode: ASK (read-only)\nDo not write or modify any files. TDD slug: ${slug}.\nRead gameplay/TDD only as needed to answer. Match reply length to the question.`,
       adviceDigest
-        ? `\n## Soft playability notes (only if relevant to their question)\n${adviceDigest}\n`
+        ? `\n## Soft playability notes (only if relevant)\n${adviceDigest}\n`
         : "",
       `User request:\n${message}`,
     ]
@@ -84,7 +94,7 @@ export function buildChatPrompt({
     "",
     genreBrief,
     "",
-    chatRules,
+    pack.chat,
     "",
     `## Mode: AGENT (edit gameplay)`,
     `TDD slug: ${slug} (TDD file is read-only this turn)`,

@@ -44,6 +44,7 @@ export function createCursorProvider({ root, apiKey, model, writeMode = "generat
   }
   const modelId = model || process.env.CURSOR_MODEL || "auto";
   const askMode = writeMode === "ask";
+  const planMode = writeMode === "plan";
 
   let agent = null;
   let aborted = false;
@@ -77,22 +78,30 @@ export function createCursorProvider({ root, apiKey, model, writeMode = "generat
         );
       };
 
-      const fullPrompt = askMode
+      const fullPrompt = planMode
         ? [
-            "ASK MODE (read-only). Do NOT edit, create, delete, or patch any files.",
-            "Only inspect the codebase and answer with diagnosis + a concrete fix plan.",
-            "If you would normally write code, describe the edits instead.",
+            "PLAN MODE (read-only). Do NOT edit files. Return only the JSON plan object. No code samples.",
             "",
             prompt,
           ].join("\n")
-        : prompt;
+        : askMode
+          ? [
+              "ASK MODE (read-only). Do NOT edit, create, delete, or patch any files.",
+              "Only inspect the codebase and answer with diagnosis + a concrete fix plan.",
+              "If you would normally write code, describe the edits instead.",
+              "",
+              prompt,
+            ].join("\n")
+          : prompt;
 
       try {
         onEvent?.({
           type: "status",
-          message: askMode
-            ? `Cursor · model ${modelId} · ASK (read-only request)`
-            : `Cursor · model ${modelId}`,
+          message: planMode
+            ? `Cursor · model ${modelId} · PLAN (read-only)`
+            : askMode
+              ? `Cursor · model ${modelId} · ASK (read-only request)`
+              : `Cursor · model ${modelId}`,
         });
         agent = await Agent.create({
           apiKey: key,

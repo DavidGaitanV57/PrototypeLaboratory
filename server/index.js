@@ -14,6 +14,7 @@ import {
   setActiveProvider,
   getActiveProvider,
 } from "./agent/providers/catalog.js";
+import { pingProviderModel, pingProviderModels } from "./agent/providers/ping.js";
 import { initBenchmarkStore, getBenchmarkState, clearBenchmark, recordBenchmark } from "./agent/benchmarkStore.js";
 import { assertSafeSlug } from "./security/paths.js";
 
@@ -170,6 +171,30 @@ app.post("/api/agent/provider", async (req, res) => {
   }
 });
 
+app.post("/api/agent/ping", async (req, res) => {
+  try {
+    await initProviderCatalog(ROOT);
+    const id = req.body?.id;
+    const model = req.body?.model;
+    const result = await pingProviderModel({ id, model, root: ROOT });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message || String(err) });
+  }
+});
+
+app.post("/api/agent/ping-models", async (req, res) => {
+  try {
+    await initProviderCatalog(ROOT);
+    const id = req.body?.id;
+    const models = Array.isArray(req.body?.models) ? req.body.models : undefined;
+    const result = await pingProviderModels({ id, models, root: ROOT });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message || String(err) });
+  }
+});
+
 app.get("/api/events", (req, res) => {
   sseInit(res);
   reloadClients.add(res);
@@ -252,16 +277,18 @@ app.post("/api/sessions/:id/chat", async (req, res) => {
     const message = String(req.body?.message || "").trim();
     if (!message) throw new Error("message required");
     if (message.length > 20000) throw new Error("message too long");
-    const mode = req.body?.mode === "ask" ? "ask" : "agent";
+    const mode =
+      req.body?.mode === "ask" ? "ask" : req.body?.mode === "plan" ? "plan" : "agent";
     const outcome = await session.chat(message, {
       mode,
       onEvent: (ev) => send(ev),
     });
-    if (mode !== "ask" && !outcome?.resumable) broadcastReload("chat");
+    if (mode === "agent" && !outcome?.resumable) broadcastReload("chat");
     send({
       type: "done",
       mode: outcome?.mode || mode,
       resumable: !!outcome?.resumable,
+      ...(outcome?.plan ? { plan: outcome.plan } : {}),
       ...(session.getCheckpointInfo?.() || {}),
     });
   } catch (err) {
@@ -283,12 +310,13 @@ app.post("/api/sessions/:id/continue", async (req, res) => {
       onEvent: (ev) => send(ev),
     });
     const mode = outcome?.mode || "agent";
-    if (mode !== "ask" && !outcome?.resumable) broadcastReload("chat");
+    if (mode === "agent" && !outcome?.resumable) broadcastReload("chat");
     send({
       type: "done",
       mode,
       continued: true,
       resumable: !!outcome?.resumable,
+      ...(outcome?.plan ? { plan: outcome.plan } : {}),
       ...(session.getCheckpointInfo?.() || {}),
     });
   } catch (err) {

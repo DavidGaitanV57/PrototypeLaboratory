@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { exportBuild } from "../export.js";
-import { listGameplayFiles, mergeChatDigest, parseSyncProposal } from "../agent/gameplayEvidence.js";
+import { listGameplayFiles, mergeChatDigest, parseChatPlan, parseSyncProposal } from "../agent/gameplayEvidence.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const errors = [];
@@ -30,6 +30,14 @@ const proposal = parseSyncProposal(`Here is the list:
 `);
 if (proposal.items.length === 1 && proposal.items[0].id === "minimap") ok("parseSyncProposal");
 else fail("parseSyncProposal did not extract checklist item");
+
+const plan = parseChatPlan(`Plan:
+\`\`\`json
+{"title":"Fix laps","goal":"Laps increment.","approach":"Finish line cycle.","steps":[{"id":"laps","file":"public/gameplay/race.js","title":"Count laps on finish","detail":"Increment lap when crossing the line after checkpoints."}],"risks":["False finish"],"verify":"Complete 3 laps."}
+\`\`\`
+`);
+if (plan.steps.length === 1 && plan.steps[0].id === "laps" && plan.title === "Fix laps") ok("parseChatPlan");
+else fail("parseChatPlan did not extract steps");
 
 
 const files = await listGameplayFiles(ROOT);

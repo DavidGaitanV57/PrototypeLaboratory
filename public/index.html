@@ -83,6 +83,16 @@
             </div>
             <p id="providerHint" class="hint"></p>
             <p id="providerError" class="hint hint--danger" hidden></p>
+            <div class="row gap ping-row">
+              <button type="button" id="pingModelBtn" class="btn btn--ghost btn--sm">
+                Ping model
+              </button>
+              <button type="button" id="pingModelsBtn" class="btn btn--ghost btn--sm">
+                Ping all models
+              </button>
+            </div>
+            <p id="pingStatus" class="hint ping-status" hidden></p>
+            <ul id="pingModelList" class="ping-model-list" hidden></ul>
             <button type="button" id="generateBtn" class="btn btn--primary btn--xl">
               Generate Final
             </button>
@@ -157,6 +167,12 @@
                       <span class="model-picker__option-desc">Diagnose only, no writes</span>
                     </span>
                   </button>
+                  <button type="button" class="model-picker__option" data-mode="plan" id="chatModePlan">
+                    <span class="model-picker__option-main">
+                      <span class="model-picker__option-title">Plan</span>
+                      <span class="model-picker__option-desc">Read-only implementation plan</span>
+                    </span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -217,6 +233,9 @@
           <button type="button" id="chatContinueBtn" class="btn btn--accent btn--sm chat-continue" hidden>
             Continue checkpoint
           </button>
+          <button type="button" id="chatApplyPlanBtn" class="btn btn--accent btn--sm chat-continue" hidden>
+            Review plan
+          </button>
         </aside>
 
         <div id="playStatus" class="play-status" hidden></div>
@@ -274,6 +293,45 @@
           <div class="row end gap" style="margin-top: 1rem">
             <button type="button" id="syncReviewCancel" class="btn btn--ghost">Cancel</button>
             <button type="button" id="syncReviewApply" class="btn btn--accent">Apply selected</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="planReviewOverlay" class="bench-overlay" data-plab-ui hidden>
+        <div class="bench-card sync-review plan-review" role="dialog" aria-modal="true" aria-labelledby="planReviewTitle">
+          <header class="bench-card__head">
+            <h2 id="planReviewTitle">Plan</h2>
+            <button type="button" id="planReviewClose" class="btn btn--ghost btn--sm">Close</button>
+          </header>
+          <p id="planReviewLede" class="sync-review__lede">
+            Uncheck steps to drop them. Use the box below to add or change steps without starting over. Apply selected sends the checklist to Agent.
+          </p>
+          <div id="planReviewMeta" class="plan-review__meta"></div>
+          <p id="planReviewEmpty" class="benchmark__empty" hidden>No steps in this plan.</p>
+          <div class="sync-review__toolbar">
+            <button type="button" id="planReviewAll" class="btn btn--ghost btn--sm">Select all</button>
+            <button type="button" id="planReviewNone" class="btn btn--ghost btn--sm">Select none</button>
+            <span id="planReviewCount" class="sync-review__count"></span>
+          </div>
+          <ul id="planReviewList" class="sync-review__list"></ul>
+          <p id="planReviewVerify" class="plan-review__verify" hidden></p>
+          <form id="planReviewForm" class="plan-review__compose">
+            <label class="plan-review__compose-label" for="planReviewInput">Revise plan</label>
+            <div class="plan-review__compose-row">
+              <input
+                id="planReviewInput"
+                type="text"
+                placeholder="Keep the checked steps. Also add a banana item and a lap HUD…"
+                autocomplete="off"
+              />
+              <button type="submit" class="btn btn--primary btn--sm plan-review__compose-send" aria-label="Revise plan">
+                ↑
+              </button>
+            </div>
+          </form>
+          <div class="row end gap" style="margin-top: 0.85rem">
+            <button type="button" id="planReviewDiscard" class="btn btn--ghost">Discard</button>
+            <button type="button" id="planReviewApply" class="btn btn--accent">Apply selected</button>
           </div>
         </div>
       </div>

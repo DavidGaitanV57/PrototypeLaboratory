@@ -7,6 +7,10 @@ const modelSelect = document.getElementById("modelSelect");
 const modelCustom = document.getElementById("modelCustom");
 const providerHint = document.getElementById("providerHint");
 const providerError = document.getElementById("providerError");
+const pingModelBtn = document.getElementById("pingModelBtn");
+const pingModelsBtn = document.getElementById("pingModelsBtn");
+const pingStatus = document.getElementById("pingStatus");
+const pingModelList = document.getElementById("pingModelList");
 const generateBtn = document.getElementById("generateBtn");
 const continueBtn = document.getElementById("continueBtn");
 const exportBtn = document.getElementById("exportBtn");
@@ -29,10 +33,12 @@ const chatModelSelect = document.getElementById("chatModelSelect");
 const chatModelCustom = document.getElementById("chatModelCustom");
 const chatModeAgent = document.getElementById("chatModeAgent");
 const chatModeAsk = document.getElementById("chatModeAsk");
+const chatModePlan = document.getElementById("chatModePlan");
 const chatModeTrigger = document.getElementById("chatModeTrigger");
 const chatModeTriggerText = document.getElementById("chatModeTriggerText");
 const chatModePopover = document.getElementById("chatModePopover");
 const chatModeBlurb = document.getElementById("chatModeBlurb");
+const chatApplyPlanBtn = document.getElementById("chatApplyPlanBtn");
 const startPicker = document.getElementById("startPicker");
 const startPickerTrigger = document.getElementById("startPickerTrigger");
 const startPickerTriggerText = document.getElementById("startPickerTriggerText");
@@ -65,6 +71,20 @@ const syncReviewNone = document.getElementById("syncReviewNone");
 const syncReviewList = document.getElementById("syncReviewList");
 const syncReviewEmpty = document.getElementById("syncReviewEmpty");
 const syncReviewCount = document.getElementById("syncReviewCount");
+const planReviewOverlay = document.getElementById("planReviewOverlay");
+const planReviewClose = document.getElementById("planReviewClose");
+const planReviewDiscard = document.getElementById("planReviewDiscard");
+const planReviewApply = document.getElementById("planReviewApply");
+const planReviewAll = document.getElementById("planReviewAll");
+const planReviewNone = document.getElementById("planReviewNone");
+const planReviewList = document.getElementById("planReviewList");
+const planReviewEmpty = document.getElementById("planReviewEmpty");
+const planReviewCount = document.getElementById("planReviewCount");
+const planReviewTitle = document.getElementById("planReviewTitle");
+const planReviewMeta = document.getElementById("planReviewMeta");
+const planReviewVerify = document.getElementById("planReviewVerify");
+const planReviewForm = document.getElementById("planReviewForm");
+const planReviewInput = document.getElementById("planReviewInput");
 const workEyebrow = document.getElementById("workEyebrow");
 const workTitle = document.getElementById("workTitle");
 const workStatus = document.getElementById("workStatus");
@@ -84,9 +104,46 @@ let activeWorkController = null;
 let workTimer = null;
 let workStartedAt = 0;
 let lastWorkLogLine = "";
-/** @type {"agent" | "ask"} */
+/** @type {"agent" | "ask" | "plan"} */
 let chatMode = "agent";
 const CHAT_MODE_KEY = "plab.chatMode";
+const CHAT_MODE_ORDER = ["agent", "ask", "plan"];
+/** @type {{ title: string, goal: string, approach: string, steps: object[], risks: string[], verify: string } | null} */
+let lastChatPlan = null;
+
+function normalizeChatMode(mode) {
+  if (mode === "ask" || mode === "plan") return mode;
+  return "agent";
+}
+
+function chatModeLabel(mode) {
+  const m = normalizeChatMode(mode);
+  if (m === "ask") return "Ask";
+  if (m === "plan") return "Plan";
+  return "Agent";
+}
+
+function cycleChatMode(mode) {
+  const cur = normalizeChatMode(mode);
+  const i = CHAT_MODE_ORDER.indexOf(cur);
+  return CHAT_MODE_ORDER[(i + 1) % CHAT_MODE_ORDER.length];
+}
+
+function isReadOnlyChat(mode = chatMode) {
+  return mode === "ask" || mode === "plan";
+}
+
+function chatModeBlurbText(mode = chatMode) {
+  if (mode === "ask") return "Read-only diagnosis — no file writes this turn.";
+  if (mode === "plan") return "Read-only plan — check steps, revise with feedback, then Apply or Discard.";
+  return "Agent edits public/gameplay. Pick any provider/model for this turn.";
+}
+
+function chatModePlaceholder(mode = chatMode) {
+  if (mode === "ask") return "Why are AI karts stuck on the first power-up?";
+  if (mode === "plan") return "Plan: add banana item and stop AI camping the first box…";
+  return "Tune speed, jump, timer, fix loop…";
+}
 const PLAYABLE_RESUME_KEY = "plab.resumePlayable";
 
 function updateGameInputBlock() {
@@ -94,7 +151,8 @@ function updateGameInputBlock() {
     !chatDrawer.hidden ||
     !workOverlay.hidden ||
     !benchmarkOverlay.hidden ||
-    (syncReviewOverlay && !syncReviewOverlay.hidden);
+    (syncReviewOverlay && !syncReviewOverlay.hidden) ||
+    (planReviewOverlay && !planReviewOverlay.hidden);
   document.body.dataset.plabGameInput = block ? "blocked" : "allowed";
   if (block) window.dispatchEvent(new CustomEvent("plab:input-block"));
 }
@@ -152,6 +210,11 @@ function describeAgentStep(ev) {
     const n = (ev.items || []).length;
     return n ? `Proposed ${n} TDD change${n === 1 ? "" : "s"}` : "No TDD deltas proposed";
   }
+  if (ev.type === "plan-proposal") {
+    const n = (ev.steps || []).length;
+    const title = String(ev.title || "Plan").trim();
+    return n ? `${title} · ${n} step${n === 1 ? "" : "s"}` : title || "Plan ready";
+  }
   if (ev.type === "ready") return "Playable ready";
   if (ev.type === "benchmark") {
     const dur = formatDurationMs(ev.durationMs);
@@ -192,6 +255,7 @@ function opLabel(op) {
   if (op === "generate") return "Generate";
   if (op === "chat") return "Chat";
   if (op === "ask") return "Ask";
+  if (op === "plan") return "Plan";
   if (op === "sync") return "Sync";
   return op || "Run";
 }
@@ -335,6 +399,241 @@ function renderSyncReview(items) {
   updateSyncReviewCount();
 }
 
+function setPlanReviewOpen(open) {
+  if (!planReviewOverlay) return;
+  planReviewOverlay.hidden = !open;
+  updateGameInputBlock();
+}
+
+function planFromEvent(ev) {
+  if (!ev || typeof ev !== "object") return null;
+  if (Array.isArray(ev.steps) || ev.title || ev.goal) {
+    return {
+      title: String(ev.title || "Plan").trim() || "Plan",
+      goal: String(ev.goal || "").trim(),
+      approach: String(ev.approach || "").trim(),
+      steps: Array.isArray(ev.steps) ? ev.steps : [],
+      risks: Array.isArray(ev.risks) ? ev.risks : [],
+      verify: String(ev.verify || "").trim(),
+    };
+  }
+  if (ev.plan && typeof ev.plan === "object") return planFromEvent(ev.plan);
+  return null;
+}
+
+function selectedPlanSteps() {
+  if (!planReviewList || !lastChatPlan) return [];
+  return [...planReviewList.querySelectorAll("input[type=checkbox]:checked")]
+    .map((el) => lastChatPlan.steps.find((it) => it.id === el.value))
+    .filter(Boolean);
+}
+
+function unselectedPlanSteps() {
+  if (!planReviewList || !lastChatPlan) return [];
+  return [...planReviewList.querySelectorAll("input[type=checkbox]:not(:checked)")]
+    .map((el) => lastChatPlan.steps.find((it) => it.id === el.value))
+    .filter(Boolean);
+}
+
+function updatePlanReviewCount() {
+  if (!planReviewCount || !planReviewApply) return;
+  const total = lastChatPlan?.steps?.length || 0;
+  const n = selectedPlanSteps().length;
+  planReviewCount.textContent = total ? `${n} / ${total} selected` : "";
+  planReviewApply.disabled = n === 0;
+}
+
+function appendPlanBlock(parent, label, text) {
+  if (!text) return;
+  const block = document.createElement("div");
+  block.className = "plan-review__block";
+  const h = document.createElement("h3");
+  h.textContent = label;
+  const p = document.createElement("p");
+  p.textContent = text;
+  block.append(h, p);
+  parent.appendChild(block);
+}
+
+function renderPlanReview(plan) {
+  lastChatPlan = plan && typeof plan === "object" ? plan : null;
+  if (planReviewTitle) planReviewTitle.textContent = lastChatPlan?.title || "Plan";
+  if (planReviewMeta) {
+    planReviewMeta.replaceChildren();
+    if (lastChatPlan) {
+      appendPlanBlock(planReviewMeta, "Goal", lastChatPlan.goal);
+      appendPlanBlock(planReviewMeta, "Approach", lastChatPlan.approach);
+      const risks = lastChatPlan.risks || [];
+      if (risks.length) {
+        const block = document.createElement("div");
+        block.className = "plan-review__block";
+        const h = document.createElement("h3");
+        h.textContent = "Risks";
+        const ul = document.createElement("ul");
+        ul.className = "plan-review__risks";
+        for (const risk of risks) {
+          const li = document.createElement("li");
+          li.textContent = risk;
+          ul.appendChild(li);
+        }
+        block.append(h, ul);
+        planReviewMeta.appendChild(block);
+      }
+    }
+  }
+  if (planReviewVerify) {
+    const verify = lastChatPlan?.verify || "";
+    planReviewVerify.hidden = !verify;
+    planReviewVerify.textContent = verify ? `Verify: ${verify}` : "";
+  }
+  if (!planReviewList) return;
+  planReviewList.replaceChildren();
+  const steps = lastChatPlan?.steps || [];
+  if (planReviewEmpty) planReviewEmpty.hidden = steps.length > 0;
+  planReviewList.hidden = steps.length === 0;
+  for (const it of steps) {
+    const li = document.createElement("li");
+    const label = document.createElement("label");
+    label.className = "sync-review__item";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = true;
+    cb.value = it.id;
+    cb.addEventListener("change", updatePlanReviewCount);
+    const body = document.createElement("div");
+    const title = document.createElement("div");
+    title.className = "sync-review__title";
+    title.textContent = it.title;
+    const meta = document.createElement("div");
+    meta.className = "sync-review__meta";
+    if (it.file) {
+      const chip = document.createElement("span");
+      chip.className = "sync-review__chip";
+      chip.textContent = shortPath(it.file);
+      meta.appendChild(chip);
+    }
+    body.appendChild(title);
+    if (meta.childNodes.length) body.appendChild(meta);
+    if (it.detail) {
+      const detail = document.createElement("p");
+      detail.className = "sync-review__detail";
+      detail.textContent = it.detail;
+      body.appendChild(detail);
+    }
+    label.append(cb, body);
+    li.appendChild(label);
+    planReviewList.appendChild(li);
+  }
+  updatePlanReviewCount();
+}
+
+function presentChatPlan(plan) {
+  renderPlanReview(plan);
+  setApplyPlanVisible(true);
+  setPlanReviewOpen(true);
+}
+
+function discardChatPlan() {
+  lastChatPlan = null;
+  setPlanReviewOpen(false);
+  setApplyPlanVisible(false);
+  appendChat("sys", "Plan discarded.");
+}
+
+function formatPlanStepLines(steps, heading) {
+  if (!steps.length) return [`${heading}: (none)`];
+  const lines = [`${heading}:`];
+  steps.forEach((s, i) => {
+    lines.push(`${i + 1}. ${s.title || s.id || "Step"}`);
+    if (s.id) lines.push(`   id: ${s.id}`);
+    if (s.file) lines.push(`   file: ${s.file}`);
+    if (s.detail) lines.push(`   ${s.detail}`);
+  });
+  return lines;
+}
+
+function formatChatPlanRevision(plan, keepSteps, dropSteps, feedback) {
+  return [
+    "Revise the current implementation plan. Return a full replacement JSON checklist.",
+    plan?.title ? `Title: ${plan.title}` : "",
+    plan?.goal ? `Goal: ${plan.goal}` : "",
+    plan?.approach ? `Approach: ${plan.approach}` : "",
+    "",
+    ...formatPlanStepLines(keepSteps, "KEEP these steps (copy them forward unless the note explicitly changes one)"),
+    "",
+    ...formatPlanStepLines(dropSteps, "DROP these steps (do not include them)"),
+    "",
+    "User feedback (add / change):",
+    String(feedback || "").trim(),
+    "",
+    "Keep the KEEP steps intact unless the feedback edits one of them. Add new steps for the feedback. Do not revive dropped steps. No code samples.",
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
+function formatChatPlanForAgent(plan, selectedSteps) {
+  const steps = Array.isArray(selectedSteps) ? selectedSteps : plan?.steps || [];
+  const lines = [
+    `Implement this approved plan${plan?.title ? `: ${plan.title}` : ""}.`,
+    "Follow only the selected steps. Do not add extra features.",
+  ];
+  if (plan?.goal) lines.push("", "Goal:", plan.goal);
+  if (plan?.approach) lines.push("", "Approach:", plan.approach);
+  if (steps.length) {
+    lines.push("", "Steps:");
+    steps.forEach((s, i) => {
+      lines.push(`${i + 1}. ${s.title || s.id || "Step"}`);
+      if (s.file) lines.push(`   file: ${s.file}`);
+      if (s.detail) lines.push(`   ${s.detail}`);
+    });
+  }
+  if (plan?.verify) lines.push("", "Verify in play:", plan.verify);
+  return lines.join("\n");
+}
+
+function summarizeChatPlan(plan) {
+  const title = plan?.title || "Plan ready";
+  const n = plan?.steps?.length || 0;
+  if (!n) return `${title}. No steps to apply — Discard or try Plan again.`;
+  return `${title}. ${n} step${n === 1 ? "" : "s"} — revise below, Apply selected, or Discard.`;
+}
+
+async function applySelectedPlan() {
+  if (!sessionId) return appendChat("sys", "Generate Final or Continue first.");
+  const selected = selectedPlanSteps();
+  if (!selected.length || !lastChatPlan) return;
+  const plan = lastChatPlan;
+  const n = selected.length;
+  const message = formatChatPlanForAgent(plan, selected);
+  lastChatPlan = null;
+  setPlanReviewOpen(false);
+  setApplyPlanVisible(false);
+  setChatMode("agent");
+  await sendChatTurn(message, {
+    displayText: `Apply plan: ${plan.title || "Plan"} (${n} step${n === 1 ? "" : "s"})`,
+  });
+}
+
+async function reviseChatPlan(feedback) {
+  const note = String(feedback || "").trim();
+  if (!note) return;
+  if (!sessionId) return appendChat("sys", "Generate Final or Continue first.");
+  if (!lastChatPlan) return appendChat("sys", "No plan to revise yet.");
+  const keep = selectedPlanSteps();
+  const drop = unselectedPlanSteps();
+  const message = formatChatPlanRevision(lastChatPlan, keep, drop, note);
+  if (planReviewInput) planReviewInput.value = "";
+  setPlanReviewOpen(false);
+  setChatMode("plan");
+  await sendChatTurn(message, { displayText: `Revise plan: ${note}` });
+  if (lastChatPlan && planReviewOverlay?.hidden) {
+    renderPlanReview(lastChatPlan);
+    setApplyPlanVisible(true);
+    setPlanReviewOpen(true);
+  }
+}
+
 async function clearBenchmarkData() {
   try {
     const res = await fetch("/api/benchmark", { method: "DELETE" });
@@ -433,12 +732,12 @@ function appendChat(role, text, { mode } = {}) {
   if (!text) return;
   const div = document.createElement("div");
   div.className = `chat-msg chat-msg--${role}`;
-  if (mode === "ask" || mode === "agent") {
+  if (mode === "ask" || mode === "agent" || mode === "plan") {
     div.dataset.mode = mode;
     const mark = document.createElement("span");
     mark.className = `chat-msg__mark chat-msg__mark--${mode}`;
-    mark.title = mode === "ask" ? "Ask" : "Agent";
-    mark.setAttribute("aria-label", mode === "ask" ? "Ask" : "Agent");
+    mark.title = chatModeLabel(mode);
+    mark.setAttribute("aria-label", chatModeLabel(mode));
     div.appendChild(mark);
   }
   const body = document.createElement("span");
@@ -474,8 +773,8 @@ function restoreChatLog(entries) {
 
 function stripModeEcho(text) {
   return String(text || "")
-    .replace(/^\s*\[(Agent|Ask)\]\s*/i, "")
-    .replace(/^\s*(Agent|Ask)\s*:\s*/i, "")
+    .replace(/^\s*\[(Agent|Ask|Plan)\]\s*/i, "")
+    .replace(/^\s*(Agent|Ask|Plan)\s*:\s*/i, "")
     .trim();
 }
 
@@ -487,12 +786,13 @@ function createChatRunCollector(userMessage = "") {
   let mode = "agent";
   let resumable = false;
   let checkpointTurn = null;
+  let planProposal = null;
   const userNorm = stripModeEcho(userMessage).toLowerCase();
 
   function isUserEcho(text) {
     const t = stripModeEcho(text);
     if (!t) return true;
-    if (/^\[(Agent|Ask)\]/i.test(String(text || "").trim())) return true;
+    if (/^\[(Agent|Ask|Plan)\]/i.test(String(text || "").trim())) return true;
     const norm = t.toLowerCase();
     if (userNorm && (norm === userNorm || norm.startsWith(userNorm))) return true;
     return false;
@@ -515,6 +815,12 @@ function createChatRunCollector(userMessage = "") {
           resumable = true;
           if (ev.turn) checkpointTurn = ev.turn;
         }
+        const fromDone = planFromEvent(ev.plan);
+        if (fromDone) planProposal = fromDone;
+      }
+      if (ev.type === "plan-proposal") {
+        const fromEv = planFromEvent(ev);
+        if (fromEv) planProposal = fromEv;
       }
       if (ev.type === "assistant" && ev.text) {
         const t = sanitizeAgentText(ev.text);
@@ -567,6 +873,9 @@ function createChatRunCollector(userMessage = "") {
         if (mode === "ask") {
           return "Ask finished with no readable reply. Try again or switch provider/model.";
         }
+        if (mode === "plan") {
+          return "Plan finished with no readable reply. Try again or switch provider/model.";
+        }
         return "Finished this turn — no gameplay files were written. Try rephrasing or be more specific.";
       }
       return parts.join("\n\n");
@@ -585,6 +894,9 @@ function createChatRunCollector(userMessage = "") {
     },
     get checkpointTurn() {
       return checkpointTurn;
+    },
+    get planProposal() {
+      return planProposal;
     },
   };
 }
@@ -694,7 +1006,13 @@ function setChatContinueVisible(info) {
   if (ok) {
     const turn = info.turn ? ` · turn ${info.turn}` : "";
     chatContinueBtn.textContent = `Continue checkpoint${turn}`;
+    setApplyPlanVisible(false);
   }
+}
+
+function setApplyPlanVisible(show) {
+  if (!chatApplyPlanBtn) return;
+  chatApplyPlanBtn.hidden = !show;
 }
 
 async function refreshCheckpointButton() {
@@ -837,12 +1155,14 @@ async function loadProviders() {
       data.missingHint ||
       "No API key configured. Add CURSOR_API_KEY and/or LLM_API_KEY to .env and restart.";
     generateBtn.disabled = true;
+    setPingBusy(true);
     modelSelect.innerHTML = "";
     providerHint.textContent = "";
     return;
   }
 
   generateBtn.disabled = false;
+  setPingBusy(false);
   for (const p of data.providers || []) {
     const opt = document.createElement("option");
     opt.value = p.id;
@@ -999,10 +1319,7 @@ function openChatModePicker() {
   chatModePopover.hidden = false;
   chatModeTrigger.setAttribute("aria-expanded", "true");
   if (chatModeBlurb) {
-    chatModeBlurb.textContent =
-      chatMode === "ask"
-        ? "Read-only diagnosis — no file writes this turn."
-        : "Edits gameplay files under public/gameplay.";
+    chatModeBlurb.textContent = chatModeBlurbText();
   }
 }
 
@@ -1212,7 +1529,7 @@ function bindModelPicker({
 }
 
 function setChatMode(mode, { close = true } = {}) {
-  chatMode = mode === "ask" ? "ask" : "agent";
+  chatMode = normalizeChatMode(mode);
   try {
     localStorage.setItem(CHAT_MODE_KEY, chatMode);
   } catch {
@@ -1220,21 +1537,17 @@ function setChatMode(mode, { close = true } = {}) {
   }
   chatModeAgent?.classList.toggle("is-active", chatMode === "agent");
   chatModeAsk?.classList.toggle("is-active", chatMode === "ask");
+  chatModePlan?.classList.toggle("is-active", chatMode === "plan");
   chatDrawer?.classList.toggle("chat-drawer--ask", chatMode === "ask");
+  chatDrawer?.classList.toggle("chat-drawer--plan", chatMode === "plan");
   if (chatModeTriggerText) {
-    chatModeTriggerText.textContent = chatMode === "ask" ? "Ask" : "Agent";
+    chatModeTriggerText.textContent = chatModeLabel(chatMode);
   }
   if (chatModeBlurb) {
-    chatModeBlurb.textContent =
-      chatMode === "ask"
-        ? "Read-only diagnosis — no file writes this turn."
-        : "Edits gameplay files under public/gameplay.";
+    chatModeBlurb.textContent = chatModeBlurbText(chatMode);
   }
   if (chatInput) {
-    chatInput.placeholder =
-      chatMode === "ask"
-        ? "Why are AI karts stuck on the first power-up?"
-        : "Tune speed, jump, timer, fix loop…";
+    chatInput.placeholder = chatModePlaceholder(chatMode);
   }
   if (close) closeChatModePicker();
 }
@@ -1250,6 +1563,135 @@ function updateProviderHint() {
       "Cursor SDK · pick model (auto lets Cursor choose). Requires CURSOR_API_KEY.";
   } else {
     providerHint.textContent = "";
+  }
+}
+
+function setPingBusy(busy) {
+  if (pingModelBtn) pingModelBtn.disabled = busy;
+  if (pingModelsBtn) pingModelsBtn.disabled = busy;
+}
+
+function setPingStatus(text, kind = "") {
+  if (!pingStatus) return;
+  pingStatus.hidden = !text;
+  pingStatus.textContent = text || "";
+  pingStatus.classList.remove("ping-status--ok", "ping-status--fail", "ping-status--busy");
+  if (kind) pingStatus.classList.add(`ping-status--${kind}`);
+}
+
+function clearPingModelList() {
+  if (!pingModelList) return;
+  pingModelList.replaceChildren();
+  pingModelList.hidden = true;
+}
+
+function renderPingModelList(results) {
+  if (!pingModelList) return;
+  pingModelList.replaceChildren();
+  if (!results?.length) {
+    pingModelList.hidden = true;
+    return;
+  }
+  pingModelList.hidden = false;
+  for (const row of results) {
+    const li = document.createElement("li");
+    const mark = document.createElement("span");
+    mark.className = `ping-model-list__mark ping-model-list__mark--${row.ok ? "ok" : "fail"}`;
+    mark.textContent = row.ok ? "ok" : "fail";
+    const model = document.createElement("span");
+    model.className = "ping-model-list__model";
+    model.textContent = row.model || "—";
+    model.title = row.error || row.note || "";
+    const meta = document.createElement("span");
+    meta.className = "ping-model-list__meta";
+    meta.textContent = row.ok
+      ? `${row.ms ?? "?"}ms`
+      : String(row.error || `HTTP ${row.status || "?"}`).slice(0, 48);
+    li.append(mark, model, meta);
+    pingModelList.appendChild(li);
+  }
+}
+
+async function pingSelectedModel() {
+  const id = providerSelect?.value;
+  const model = selectedModelValue();
+  if (!id || !model) {
+    setPingStatus("Pick a provider and model first.", "fail");
+    return;
+  }
+  clearPingModelList();
+  setPingBusy(true);
+  setPingStatus(`Pinging ${id} / ${model}…`, "busy");
+  try {
+    const res = await fetch("/api/agent/ping", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, model }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok && data.ok !== true) {
+      setPingStatus(data.error || `Ping failed (${res.status})`, "fail");
+      return;
+    }
+    if (data.ok) {
+      const note = data.note ? ` · ${data.note}` : "";
+      setPingStatus(`OK · ${data.label || id} / ${data.model} · ${data.ms}ms${note}`, "ok");
+    } else {
+      setPingStatus(
+        `Fail · ${data.label || id} / ${data.model || model} · ${data.error || "no response"} (${data.ms ?? "?"}ms)`,
+        "fail",
+      );
+    }
+    renderPingModelList([data]);
+  } catch (err) {
+    setPingStatus(String(err.message || err), "fail");
+  } finally {
+    setPingBusy(false);
+  }
+}
+
+async function pingAllSuggestedModels() {
+  const id = providerSelect?.value;
+  if (!id) {
+    setPingStatus("Pick a provider first.", "fail");
+    return;
+  }
+  const p = currentProvider();
+  const models = [];
+  const seen = new Set();
+  const push = (m) => {
+    const v = String(m || "").trim();
+    if (!v || seen.has(v)) return;
+    seen.add(v);
+    models.push(v);
+  };
+  push(selectedModelValue());
+  for (const m of p?.suggestedModels || []) push(m);
+  clearPingModelList();
+  setPingBusy(true);
+  setPingStatus(`Pinging ${models.length} model${models.length === 1 ? "" : "s"} on ${p?.label || id}…`, "busy");
+  try {
+    const res = await fetch("/api/agent/ping-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, models }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setPingStatus(data.error || `Ping failed (${res.status})`, "fail");
+      return;
+    }
+    const ok = data.okCount || 0;
+    const fail = data.failCount || 0;
+    setPingStatus(
+      `${data.label || id}: ${ok} ok · ${fail} fail`,
+      fail && !ok ? "fail" : fail ? "busy" : "ok",
+    );
+    renderPingModelList(data.results || []);
+  } catch (err) {
+    setPingStatus(String(err.message || err), "fail");
+  } finally {
+    setPingBusy(false);
   }
 }
 
@@ -1570,6 +2012,10 @@ chatModeAsk?.addEventListener("click", (e) => {
   e.preventDefault();
   setChatMode("ask");
 });
+chatModePlan?.addEventListener("click", (e) => {
+  e.preventDefault();
+  setChatMode("plan");
+});
 
 tddImport.addEventListener("change", async () => {
   const file = tddImport.files?.[0];
@@ -1610,6 +2056,9 @@ continueBtn.addEventListener("click", async () => {
     continueBtn.disabled = false;
   }
 });
+
+pingModelBtn?.addEventListener("click", () => pingSelectedModel());
+pingModelsBtn?.addEventListener("click", () => pingAllSuggestedModels());
 
 generateBtn.addEventListener("click", async () => {
   const slug = tddSelect.value;
@@ -1717,7 +2166,7 @@ window.addEventListener("plab:sky", () => {
   syncSkyIcon();
 });
 
-/** Left Shift held — used for Shift+Tab Agent/Ask toggle (chat open only). */
+/** Left Shift held — used for Shift+Tab Agent/Ask/Plan cycle (chat open only). */
 let leftShiftHeld = false;
 window.addEventListener("keydown", (e) => {
   if (e.code === "ShiftLeft") leftShiftHeld = true;
@@ -1734,7 +2183,7 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     e.stopPropagation();
     closeAllModelPickers();
-    setChatMode(chatMode === "ask" ? "agent" : "ask");
+    setChatMode(cycleChatMode(chatMode));
     return;
   }
   if (e.key === "Escape") {
@@ -1749,6 +2198,10 @@ window.addEventListener("keydown", (e) => {
     }
     if (syncReviewOverlay && !syncReviewOverlay.hidden) {
       setSyncReviewOpen(false);
+      return;
+    }
+    if (planReviewOverlay && !planReviewOverlay.hidden) {
+      setPlanReviewOpen(false);
       return;
     }
     if (!chatDrawer.hidden) {
@@ -1783,12 +2236,23 @@ chatForm.addEventListener("submit", async (e) => {
   const message = chatInput.value.trim();
   if (!message) return;
   chatInput.value = "";
-  appendChat("user", message, { mode: chatMode });
+  await sendChatTurn(message);
+});
+
+async function sendChatTurn(message, { displayText } = {}) {
+  const mode = chatMode;
+  appendChat("user", displayText || message, { mode });
   setChatContinueVisible(null);
+  if (mode !== "plan") setApplyPlanVisible(false);
   const runNotes = createChatRunCollector(message);
   showWorkOverlay({
-    title: chatMode === "ask" ? "Ask (read-only)" : "Chat iteration",
-    eyebrow: chatMode === "ask" ? "Ask" : "Agent",
+    title:
+      mode === "ask"
+        ? "Ask (read-only)"
+        : mode === "plan"
+          ? "Plan (read-only)"
+          : "Chat iteration",
+    eyebrow: chatModeLabel(mode),
     status: "Sending…",
   });
   try {
@@ -1802,7 +2266,7 @@ chatForm.addEventListener("submit", async (e) => {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, mode: chatMode }),
+        body: JSON.stringify({ message, mode }),
       },
       (ev) => {
         if (ev?.type === "error") chatFailed = true;
@@ -1819,17 +2283,28 @@ chatForm.addEventListener("submit", async (e) => {
       return;
     }
     setChatContinueVisible(null);
-    if (chatMode === "agent" && !chatFailed && !runNotes.hadError && runNotes.wroteFiles) {
+    if (mode === "plan" && !chatFailed && !runNotes.hadError) {
+      const plan = runNotes.planProposal;
+      if (plan && (plan.steps?.length || plan.goal || plan.title)) {
+        presentChatPlan(plan);
+        appendChat("assistant", summarizeChatPlan(plan), { mode: "plan" });
+        return;
+      }
+      if (lastChatPlan) setApplyPlanVisible(true);
+      appendChat("assistant", "No checklist came back. Try Plan again.", { mode: "plan" });
+      return;
+    }
+    if (mode === "agent" && !chatFailed && !runNotes.hadError && runNotes.wroteFiles) {
       schedulePlayableReload({
         assistantReply: reply,
         openChat: true,
       });
       return;
     }
-    if (chatMode === "agent" && !chatFailed && !runNotes.hadError) {
+    if (mode === "agent" && !chatFailed && !runNotes.hadError) {
       await mountGame();
     }
-    appendChat("assistant", reply);
+    appendChat("assistant", reply, { mode });
   } catch (err) {
     if (err.name === "AbortError") {
       await new Promise((r) => setTimeout(r, 150));
@@ -1839,6 +2314,12 @@ chatForm.addEventListener("submit", async (e) => {
     appendChat("sys", String(err.message || err));
     hideWorkOverlay();
   }
+}
+
+chatApplyPlanBtn?.addEventListener("click", () => {
+  if (!lastChatPlan) return appendChat("sys", "No plan to review yet.");
+  renderPlanReview(lastChatPlan);
+  setPlanReviewOpen(true);
 });
 
 chatContinueBtn?.addEventListener("click", async () => {
@@ -1877,14 +2358,22 @@ chatContinueBtn?.addEventListener("click", async () => {
       return;
     }
     setChatContinueVisible(null);
-    if (mode !== "ask" && !chatFailed && !runNotes.hadError && runNotes.wroteFiles) {
+    if (mode === "plan" && !chatFailed && !runNotes.hadError) {
+      const plan = runNotes.planProposal;
+      if (plan && (plan.steps?.length || plan.goal || plan.title)) {
+        presentChatPlan(plan);
+        appendChat("assistant", summarizeChatPlan(plan), { mode: "plan" });
+        return;
+      }
+    }
+    if (mode === "agent" && !chatFailed && !runNotes.hadError && runNotes.wroteFiles) {
       schedulePlayableReload({
         assistantReply: reply,
         openChat: true,
       });
       return;
     }
-    if (mode !== "ask" && !chatFailed && !runNotes.hadError) {
+    if (mode === "agent" && !chatFailed && !runNotes.hadError) {
       await mountGame();
     }
     appendChat("assistant", reply || "Continued and finished.");
@@ -1986,6 +2475,27 @@ syncReviewNone?.addEventListener("click", () => {
   updateSyncReviewCount();
 });
 
+planReviewClose?.addEventListener("click", () => setPlanReviewOpen(false));
+planReviewOverlay?.addEventListener("click", (e) => {
+  if (e.target === planReviewOverlay) setPlanReviewOpen(false);
+});
+planReviewDiscard?.addEventListener("click", () => discardChatPlan());
+planReviewApply?.addEventListener("click", () => applySelectedPlan());
+planReviewAll?.addEventListener("click", () => {
+  for (const el of planReviewList?.querySelectorAll("input[type=checkbox]") || []) el.checked = true;
+  updatePlanReviewCount();
+});
+planReviewNone?.addEventListener("click", () => {
+  for (const el of planReviewList?.querySelectorAll("input[type=checkbox]") || []) el.checked = false;
+  updatePlanReviewCount();
+});
+planReviewForm?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const note = planReviewInput?.value.trim();
+  if (!note) return;
+  await reviseChatPlan(note);
+});
+
 exportBtn.addEventListener("click", () => runExportBuild());
 exportPlayBtn.addEventListener("click", () => runExportBuild());
 
@@ -2015,7 +2525,7 @@ await loadProviders();
 await loadBenchmark();
 await refreshContinueBtn();
 try {
-  setChatMode(localStorage.getItem(CHAT_MODE_KEY) === "ask" ? "ask" : "agent");
+  setChatMode(normalizeChatMode(localStorage.getItem(CHAT_MODE_KEY)));
 } catch {
   setChatMode("agent");
 }

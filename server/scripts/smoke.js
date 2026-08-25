@@ -56,6 +56,12 @@ try {
 } catch (e) {
   fail(e.message);
 }
+try {
+  assertAgentWriteAllowed("public/gameplay/main.js", "plan");
+  fail("plan write should be blocked");
+} catch {
+  ok("writePolicy plan is read-only");
+}
 
 try {
   assertSafeSlug("../etc");

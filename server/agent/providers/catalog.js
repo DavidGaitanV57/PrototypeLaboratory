@@ -65,10 +65,11 @@ export const KNOWN_PROVIDERS = [
     label: "Kimi",
     keyVars: ["KIMI_API_KEY", "MOONSHOT_API_KEY"],
     urlVar: "KIMI_BASE_URL",
-    defaultUrl: "https://api.moonshot.ai/v1",
+    // Kimi Code membership keys (Moderato/etc.) use api.kimi.com — not api.moonshot.ai pay-as-you-go.
+    defaultUrl: "https://api.kimi.com/coding/v1",
     modelVar: "KIMI_MODEL",
-    defaultModel: "kimi-k2-0905-preview",
-    suggestedModels: ["kimi-k2-0905-preview", "moonshot-v1-128k"],
+    defaultModel: "k3-256k",
+    suggestedModels: ["k3-256k", "k3", "kimi-for-coding"],
   },
   {
     id: "glm",
@@ -101,6 +102,7 @@ const HOST_TO_ID = {
   "api.anthropic.com": "anthropic",
   "api.moonshot.ai": "kimi",
   "api.moonshot.cn": "kimi",
+  "api.kimi.com": "kimi",
   "open.bigmodel.cn": "glm",
   "openrouter.ai": "openrouter",
 };

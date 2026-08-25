@@ -142,7 +142,7 @@ export function createLlmProvider({
       },
     },
   };
-  const tools = writeMode === "ask" ? readTools : [...readTools, writeTool];
+  const tools = writeMode === "ask" || writeMode === "plan" ? readTools : [...readTools, writeTool];
 
   async function execTool(name, args) {
     const rel = canonicalizeRel(args.path || "");
@@ -211,7 +211,9 @@ export function createLlmProvider({
               content:
                 writeMode === "ask"
                   ? "You answer questions about an existing playable prototype. Read-only tools only. Match answer length to the question: short factual questions get short human answers — no file dumps, audits, or verification checklists unless asked."
-                  : "You are a gameplay prototyping agent. Use tools to read/write files. Obey write policy in the user prompt. Keep working until the task is complete — do not stop early.",
+                  : writeMode === "plan"
+                    ? "You write a short implementation plan as JSON for an existing playable. Read-only tools only. No file edits. No code samples. End with the JSON object (title, goal, approach, steps[{id,file,title,detail}], risks, verify)."
+                    : "You are a gameplay prototyping agent. Use tools to read/write files. Obey write policy in the user prompt. Keep working until the task is complete — do not stop early.",
             },
             { role: "user", content: prompt },
           ];
