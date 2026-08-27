@@ -97,6 +97,8 @@ const ICON_MOON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" s
 const LAST_SLUG_KEY = "plab.lastSlug";
 
 let sessionId = null;
+let sessionSlug = null;
+let lastAdviceDigestShown = "";
 let gameModule = null;
 let tdds = [];
 let providerState = { providers: [], active: null, model: null, configured: false };
@@ -728,6 +730,19 @@ function setPlayStatus(text, show = true) {
   playStatus.textContent = text || "";
 }
 
+function updateSessionTddBadge(slug) {
+  const badge = document.getElementById("sessionTddBadge");
+  if (!badge) return;
+  if (!slug) {
+    badge.hidden = true;
+    badge.textContent = "";
+    return;
+  }
+  const t = tdds.find((x) => x.slug === slug);
+  badge.textContent = t ? `${t.projectName} · ${slug}` : slug;
+  badge.hidden = false;
+}
+
 function appendChat(role, text, { mode } = {}) {
   if (!text) return;
   const div = document.createElement("div");
@@ -776,6 +791,39 @@ function stripModeEcho(text) {
     .replace(/^\s*\[(Agent|Ask|Plan)\]\s*/i, "")
     .replace(/^\s*(Agent|Ask|Plan)\s*:\s*/i, "")
     .trim();
+}
+
+function collapseChatWhitespace(text) {
+  return String(text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+}
+
+/**
+ * Pick one final reply from streamed assistant events.
+ * Cursor often sends growing snapshots (`**Biol**` → `**Biolum**`) that are NOT
+ * strict prefixes — never concatenate those or the chat turns into gibberish.
+ */
+function mergeAssistantChunks(chunks, { isUserEcho }) {
+  const parts = [];
+  for (const raw of chunks) {
+    const chunk = stripModeEcho(String(raw || "")).trim();
+    if (!chunk || isUserEcho(chunk)) continue;
+    parts.push(chunk);
+  }
+  if (!parts.length) return "";
+  if (parts.length === 1) return collapseChatWhitespace(parts[0]);
+
+  const longest = parts.reduce((a, b) => (a.length >= b.length ? a : b));
+  const last = parts[parts.length - 1];
+  // Prefer the last snapshot when it's basically the full answer
+  if (last.length >= Math.max(48, longest.length * 0.7)) {
+    return collapseChatWhitespace(last);
+  }
+  return collapseChatWhitespace(longest);
 }
 
 function createChatRunCollector(userMessage = "") {
@@ -841,23 +889,7 @@ function createChatRunCollector(userMessage = "") {
           ? `Request failed: ${errorMessage}`
           : "Request failed — no gameplay changes were applied.";
       }
-      let text = "";
-      for (let i = assistantChunks.length - 1; i >= 0; i--) {
-        const chunk = stripModeEcho(assistantChunks[i]);
-        if (chunk.length >= 16 && !isUserEcho(chunk)) {
-          text = chunk;
-          break;
-        }
-      }
-      if (!text) {
-        for (let i = assistantChunks.length - 1; i >= 0; i--) {
-          const chunk = stripModeEcho(assistantChunks[i]);
-          if (chunk && !isUserEcho(chunk)) {
-            text = chunk;
-            break;
-          }
-        }
-      }
+      const text = mergeAssistantChunks(assistantChunks, { isUserEcho });
 
       const files = [...writtenFiles].filter(Boolean).sort();
       const parts = [];
@@ -1068,7 +1100,13 @@ async function readSSE(url, options, onEvent) {
 }
 
 function handleWorkEvent(ev, { chat = false } = {}) {
-  if (ev.type === "session" && ev.sessionId) sessionId = ev.sessionId;
+  if (ev.type === "session" && ev.sessionId) {
+    sessionId = ev.sessionId;
+    if (ev.slug) {
+      sessionSlug = ev.slug;
+      updateSessionTddBadge(ev.slug);
+    }
+  }
   if (ev.type === "benchmark") {
     applyBenchmarkEvent(ev);
     const summary = summarizeAgentEvent(ev);
@@ -1084,11 +1122,12 @@ function handleWorkEvent(ev, { chat = false } = {}) {
     for (const w of warns.slice(0, 6)) {
       appendWorkLog(`Hint: ${w.message}`);
     }
-    if (digest && chat) appendChat("sys", digest);
-    else if (digest && !chat) {
-      // Surface after generate in chat drawer so operator isn't blind
+    const showDigest = digest && digest !== lastAdviceDigestShown;
+    if (showDigest && chat) appendChat("sys", digest);
+    else if (showDigest && !chat) {
       appendChat("sys", digest);
     }
+    if (showDigest) lastAdviceDigestShown = digest;
     if (warns.length) {
       setWorkStatus(`Soft check · ${warns.length} hint(s) — playable still opens`);
     }
@@ -1878,8 +1917,11 @@ async function openPlayable({ slug, resume = false } = {}) {
   const useSlug = slug || tddSelect.value;
   if (!useSlug) throw new Error("Select a TDD");
   localStorage.setItem(LAST_SLUG_KEY, useSlug);
+  updateSessionTddBadge(useSlug);
 
-  if (resume || !sessionId) {
+  const needSession =
+    resume || !sessionId || (sessionSlug != null && sessionSlug !== useSlug);
+  if (needSession) {
     const res = await fetch("/api/sessions/resume", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1888,6 +1930,10 @@ async function openPlayable({ slug, resume = false } = {}) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Resume failed");
     sessionId = data.sessionId;
+    sessionSlug = data.slug || useSlug;
+    lastAdviceDigestShown = "";
+  } else if (!sessionSlug) {
+    sessionSlug = useSlug;
   }
 
   showScreen("play");
@@ -2033,6 +2079,9 @@ cleanBtn.addEventListener("click", async () => {
   await unmountGame();
   await fetch("/api/workspace/clean", { method: "POST" });
   sessionId = null;
+  sessionSlug = null;
+  lastAdviceDigestShown = "";
+  updateSessionTddBadge(null);
   startLog.textContent = "";
   startLog.hidden = true;
   continueBtn.hidden = true;

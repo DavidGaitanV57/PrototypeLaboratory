@@ -34,6 +34,26 @@ function usageFromResult(result) {
 }
 
 /**
+ * Cursor may stream either raw token deltas or growing message snapshots.
+ * Never concatenate two snapshots of the same answer (breaks on markdown like
+ * `**Biol**` → `**Biolum**`, which is not a strict string prefix).
+ */
+function absorbAssistantDelta(prev, next) {
+  const a = String(prev || "");
+  const b = String(next || "");
+  if (!b) return a;
+  if (!a) return b;
+  if (b.startsWith(a)) return b;
+  if (a.startsWith(b)) return a;
+  // Growing snapshot rewrite (markdown / retokenize) — prefer newer when longer
+  if (b.length >= a.length) return b;
+  // Short token delta
+  if (b.length <= 32) return a + b;
+  // Shorter snapshot — keep the fuller text
+  return a;
+}
+
+/**
  * Cursor SDK provider — local cwd agent. Model may be "auto" or a listed id.
  * @param {{ root: string, apiKey?: string, model?: string, writeMode?: string }} opts
  */
@@ -110,6 +130,15 @@ export function createCursorProvider({ root, apiKey, model, writeMode = "generat
         });
 
         const run = await agent.send(fullPrompt);
+        /** @type {string[]} */
+        const replyParts = [];
+        let live = "";
+        let lastStatusAt = 0;
+        const flushLive = () => {
+          const t = live.trim();
+          if (t) replyParts.push(t);
+          live = "";
+        };
         for await (const event of run.stream()) {
           if (aborted) {
             try {
@@ -122,9 +151,19 @@ export function createCursorProvider({ root, apiKey, model, writeMode = "generat
           if (event.type === "assistant") {
             meter.noteTurn(event.usage || event.message?.usage);
             for (const block of event.message?.content || []) {
-              if (block.type === "text") onEvent?.({ type: "assistant", text: block.text });
+              if (block.type !== "text" || !block.text) continue;
+              live = absorbAssistantDelta(live, block.text);
+              // Status only while streaming — do NOT emit every snapshot as assistant
+              // (the chat UI would concatenate them into gibberish).
+              const now = Date.now();
+              if (now - lastStatusAt > 400) {
+                lastStatusAt = now;
+                const snip = live.replace(/\s+/g, " ").trim().slice(-120);
+                if (snip.length >= 8) onEvent?.({ type: "status", message: snip });
+              }
             }
           } else if (event.type === "tool_call") {
+            flushLive();
             meter.noteTool();
             const name = event.name || event.toolCall?.name || "tool";
             const relPath = toolPathFromEvent(event);
@@ -135,6 +174,9 @@ export function createCursorProvider({ root, apiKey, model, writeMode = "generat
             onEvent?.({ type: "tool", name, path: relPath || undefined, status: "call" });
           }
         }
+        flushLive();
+        const finalText = replyParts.join("\n\n").trim();
+        if (finalText) onEvent?.({ type: "assistant", text: finalText });
         const result = await run.wait();
         const status = aborted ? "cancelled" : result?.status || "finished";
         emitBenchmark(status, usageFromResult(result));

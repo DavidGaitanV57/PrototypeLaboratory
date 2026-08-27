@@ -6,7 +6,7 @@ The user wants an **implementation plan** for the already generated playable. **
 
 - You may **only** use read tools (`list_dir`, `read_file`) to inspect `public/gameplay/**` and the TDD.
 - **Never** call `write_file`.
-- Answer in the **same language** the user used.
+- Answer in the **same language** the user used — **one language only** for the full reply. Do not mix Spanish and English.
 - **No code samples, no function bodies, no markdown essays.** The lab shows a checklist UI.
 
 ## Required output

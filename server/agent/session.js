@@ -83,27 +83,38 @@ function wrapEvents({ root, op, slug, picked, onEvent }) {
 /**
  * Soft advisor after LLM writes — never throws into the happy path.
  */
-async function emitSoftAdvice({ root, tddsRoot, slug, onEvent }) {
+async function emitSoftAdvice({ root, tddsRoot, slug, onEvent, previousDigest = "" }) {
   try {
     const tdd = await readTdd(tddsRoot, slug);
     const report = await advisePlayability({ root, tddText: tdd.text });
     const digest = formatAdviceForChat(report.advice);
-    onEvent?.({
-      type: "advice",
-      genres: report.genres,
-      advice: report.advice,
-      digest,
-    });
+    const changed = digest !== previousDigest;
+    if (changed) {
+      onEvent?.({
+        type: "advice",
+        genres: report.genres,
+        advice: report.advice,
+        digest,
+        changed: true,
+      });
+    }
     const warns = report.advice.filter((a) => a.severity === "warn");
     if (warns.length) {
       onEvent?.({
         type: "status",
-        message: `Soft check: ${warns.length} hint(s) — playable still opens; fix via chat if needed`,
+        message: changed
+          ? `Soft check: ${warns.length} hint(s) — playable still opens; fix via chat if needed`
+          : "Soft check: unchanged since last turn",
       });
     } else {
-      onEvent?.({ type: "status", message: "Soft check: no blocking issues (play-test the loop)" });
+      onEvent?.({
+        type: "status",
+        message: changed
+          ? "Soft check: no blocking issues (play-test the loop)"
+          : "Soft check: unchanged since last turn",
+      });
     }
-    return report;
+    return { ...report, digest, changed };
   } catch (err) {
     onEvent?.({
       type: "status",
@@ -254,8 +265,9 @@ export async function createSession({ root, tddsRoot, slug }) {
           tddsRoot,
           slug,
           onEvent: handlers.onEvent,
+          previousDigest: lastAdviceDigest,
         });
-        lastAdviceDigest = formatAdviceForChat(report?.advice || []);
+        if (report?.digest !== undefined) lastAdviceDigest = report.digest;
         return result;
       } catch (err) {
         captureCheckpoint(runMeta);
@@ -327,8 +339,9 @@ export async function createSession({ root, tddsRoot, slug }) {
             tddsRoot,
             slug,
             onEvent: handlers.onEvent,
+            previousDigest: lastAdviceDigest,
           });
-          lastAdviceDigest = formatAdviceForChat(report?.advice || []);
+          if (report?.digest !== undefined) lastAdviceDigest = report.digest;
         }
         let plan = null;
         if (mode === "plan") {
@@ -384,8 +397,9 @@ export async function createSession({ root, tddsRoot, slug }) {
             tddsRoot,
             slug,
             onEvent: handlers.onEvent,
+            previousDigest: lastAdviceDigest,
           });
-          lastAdviceDigest = formatAdviceForChat(report?.advice || []);
+          if (report?.digest !== undefined) lastAdviceDigest = report.digest;
         }
         let plan = null;
         if (cp.mode === "plan") {

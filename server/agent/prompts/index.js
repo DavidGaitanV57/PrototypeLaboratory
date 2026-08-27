@@ -55,6 +55,29 @@ export function buildGenerateFinalPrompt({ slug, tddText, agentsMd, pack }) {
   ].join("\n");
 }
 
+/** Nudge the model to stay in one language when the TDD/gameplay are English. */
+function replyLanguageDirective(message = "") {
+  const m = String(message || "").trim();
+  if (!m) return "";
+  const esScore = (
+    m.match(
+      /\b(de|del|el|la|los|las|un|una|qué|que|cómo|como|por|para|con|es|está|esta|están|juego|archivo|resumir|explica|arregla|velocidad|salto|timer|porqué|porque|también|más|cuál|cuando|dónde|donde|haz|sube|solo|sólo|ayuda|funciona|rompe|roto|gracias|cuéntame|cuentame|dime|hablame|háblame)\b/gi,
+    ) || []
+  ).length;
+  const enScore = (
+    m.match(
+      /\b(the|what|how|why|fix|speed|jump|game|file|explain|summarize|broken|works|help|thanks|please|can you|could you|should|would|is|are|was|were|don't|doesn't|it's|that's|with|for|from|this|that|when|where|which|who|tell me|describe)\b/gi,
+    ) || []
+  ).length;
+  if (esScore >= 2 && esScore > enScore) {
+    return "\n## Reply language\nRespond **entirely in Spanish** for the full answer. The TDD may be in English — translate concepts, do not paste English paragraphs. Proper nouns (Biolum Ascent, Doodle Jump) may stay in English.\n";
+  }
+  if (enScore >= 2 && enScore > esScore) {
+    return "\n## Reply language\nRespond **entirely in English**. Do not mix in Spanish unless quoting the user.\n";
+  }
+  return "\n## Reply language\nUse the **same language as the user's message** for the entire reply — do not mix Spanish and English in one answer.\n";
+}
+
 export function buildChatPrompt({
   slug,
   message,
@@ -66,6 +89,7 @@ export function buildChatPrompt({
 }) {
   const ask = mode === "ask";
   const plan = mode === "plan";
+  const lang = replyLanguageDirective(message);
 
   if (ask || plan) {
     const chatRules = plan ? pack.chatPlan : pack.chatAsk;
@@ -75,6 +99,7 @@ export function buildChatPrompt({
       plan
         ? `## Mode: PLAN (read-only)\nDo not write files. End with the JSON plan object only (no code). TDD slug: ${slug}.`
         : `## Mode: ASK (read-only)\nDo not write or modify any files. TDD slug: ${slug}.\nRead gameplay/TDD only as needed to answer. Match reply length to the question.`,
+      lang,
       adviceDigest
         ? `\n## Soft playability notes (only if relevant)\n${adviceDigest}\n`
         : "",
@@ -98,6 +123,7 @@ export function buildChatPrompt({
     "",
     `## Mode: AGENT (edit gameplay)`,
     `TDD slug: ${slug} (TDD file is read-only this turn)`,
+    lang,
     adviceDigest
       ? `\n## Soft playability notes from last check (fix if the user is addressing them)\n${adviceDigest}\n`
       : "",

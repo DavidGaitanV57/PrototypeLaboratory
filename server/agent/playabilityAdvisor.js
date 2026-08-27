@@ -12,18 +12,100 @@ import path from "node:path";
  * @typedef {{ id: string, severity: "info" | "warn", message: string, chatHint?: string }} Advice
  */
 
+function parseDeclaredGenre(tddText = "") {
+  const yaml = String(tddText).match(/^genre:\s*["']?([^"'\n]+)/im);
+  if (yaml) return yaml[1].trim().toLowerCase();
+  const table = String(tddText).match(
+    /\|\s*\*\*Genre\s*\/\s*sub-genre\*\*\s*\|\s*([^|]+)\|/i,
+  );
+  if (table) return table[1].trim().toLowerCase();
+  return "";
+}
+
+/** Drop contrast lines like "distinct from kart racing" so they don't infer kart. */
+function scrubContrastKartNoise(text = "") {
+  return String(text)
+    .replace(
+      /\b(?:distinct from|unlike|not a|not an|vs\.?\s|versus|non-|no)\s+(?:[\w-]+\s+){0,4}(?:kart|racing|race|racer)\b[\w\s-]*/gi,
+      " ",
+    )
+    .replace(/\b(?:kart|racing|race)\s*[≠!=]\s*[\w\s]+/gi, " ")
+    .replace(/\b[\w\s]+[≠!=]\s*(?:kart|racing)\b[\w\s]*/gi, " ");
+}
+
+function declaredGenreSignals(declared = "") {
+  if (!declared) {
+    return { kart: false, platformer: false, collector: false, arena: false };
+  }
+  const kart =
+    /\b(kart|mario\s*kart|racing|racer|lap\b|laps\b)\b/.test(declared) &&
+    !/\b(endless|vertical|platformer|stealth|survival|infiltration|wave)\b/.test(declared);
+  const platformer = /\b(endless|vertical|platformer|doodle|ascend|ascent|bounce|jump)\b/.test(
+    declared,
+  );
+  const collector =
+    /\b(collect|coin|timer|grab|pick\s*up)\b/.test(declared) && !kart && !platformer;
+  const arena =
+    /\b(arena|combat|wave|enemy|fight|survive|stealth|infiltration|survival|twin-stick)\b/.test(
+      declared,
+    ) && !kart;
+  return { kart, platformer, collector, arena };
+}
+
 /**
  * @param {string} tddText
  */
 export function inferGenreHints(tddText = "") {
-  const t = String(tddText).toLowerCase();
+  const declared = parseDeclaredGenre(tddText);
+  const declaredSig = declaredGenreSignals(declared);
+  const t = scrubContrastKartNoise(String(tddText)).toLowerCase();
   const hints = [];
-  const kart =
-    /\b(lap|laps|checkpoint|kart|race|drift|item\s*box|mario\s*kart|racing)\b/.test(t);
-  const collector =
-    /\b(coin|collect|timer|grab|pick\s*up)\b/.test(t) && !kart;
-  const arena =
-    /\b(arena|combat|wave|enemy|fight|survive|ko)\b/.test(t) && !kart;
+  const kartStrong =
+    /\b(lap|laps|kart|mario\s*kart|item\s*box|finish\s*line|total\s*laps|race\s*director|kartlocomotion)\b/.test(
+      t,
+    );
+  const kartRace =
+    /\b(racing|racer\b)\b/.test(t) &&
+    /\b(kart|track|lap|checkpoint|item\s*box|finish\s*line)\b/.test(t) &&
+    !/\b(endless|vertical|platformer|doodle|ascend|ascent|bounce|stealth|survival|wave)\b/.test(
+      t,
+    );
+  const kartDrift =
+    /\bdrift\b/.test(t) &&
+    /\b(kart|boost|turbo|steer|lap|race|track|item\s*box)\b/.test(t) &&
+    !/\b(platform|kelp|lane|moving\s+platform)\b/.test(t);
+  let kart = kartStrong || kartRace || kartDrift;
+  let platformer =
+    /\b(endless|vertical|platformer|doodle|ascend|ascent|bounce|jump)\b/.test(t) && !kart;
+  let collector =
+    /\b(coin|collect|timer|grab|pick\s*up)\b/.test(t) && !kart && !platformer;
+  let arena = /\b(arena|combat|wave|enemy|fight|survive|ko)\b/.test(t) && !kart;
+
+  if (declared) {
+    if (declaredSig.platformer) {
+      platformer = true;
+      kart = false;
+    } else if (declaredSig.kart) {
+      kart = true;
+      platformer = false;
+    } else if (declaredSig.collector) {
+      collector = true;
+      kart = false;
+    } else if (declaredSig.arena) {
+      arena = true;
+      kart = false;
+    } else if (!declaredSig.kart) {
+      kart = false;
+    }
+  }
+
+  if (platformer) {
+    hints.push({
+      genre: "platformer",
+      brief:
+        "Platformer loop: lateral steer + auto bounce/jump; depth/score on HUD; lose on fall/hazard; instant restart.",
+    });
+  }
 
   if (kart) {
     hints.push({

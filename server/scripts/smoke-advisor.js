@@ -23,6 +23,18 @@ const hints = inferGenreHints(kartTdd);
 if (hints.some((h) => h.genre === "kart")) ok("inferGenreHints kart");
 else fail("expected kart genre");
 
+const contrastTdd =
+  "Completely distinct from kart racing. genre: Stealth / infiltration (top-down 3D)";
+const contrastHints = inferGenreHints(contrastTdd);
+if (!contrastHints.some((h) => h.genre === "kart")) ok("inferGenreHints ignores kart contrast");
+else fail("kart contrast text should not infer kart");
+
+const platformerTdd = 'genre: "Endless vertical platformer / arcade (underwater)"';
+const platformHints = inferGenreHints(platformerTdd);
+if (platformHints.some((h) => h.genre === "platformer") && !platformHints.some((h) => h.genre === "kart")) {
+  ok("inferGenreHints platformer from declared genre");
+} else fail("expected platformer without kart");
+
 const brief = buildGenreBrief(kartTdd);
 if (/lap must increment/i.test(brief)) ok("buildGenreBrief includes lap contract");
 else fail("genre brief missing lap contract");

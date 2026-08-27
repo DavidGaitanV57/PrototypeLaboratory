@@ -11,6 +11,7 @@ The user is tuning the **already generated** playable prototype.
 - Do not edit the TDD unless the user explicitly asked for Sync (separate mode).
 - Do not touch `public/runtime/**` or lab chrome.
 - Keep graybox: items/power-ups = primitive + label/emoji — avoid remote images unless the user asks.
+- Answer in the **same language** the user used — **one language only** for the whole reply. Do not start in Spanish and switch to English (or vice versa). English proper nouns from the TDD (Biolum Ascent, Doodle Jump) are fine inline.
 
 ## Closing summary (required)
 
