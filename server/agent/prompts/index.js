@@ -11,17 +11,27 @@ async function readPrompt(name) {
 }
 
 export async function loadPromptPack() {
-  const [quality, generateFinal, chat, chatAsk, chatPlan, syncTdd, syncPreview, genreLoop] =
-    await Promise.all([
-      readPrompt("playable-quality.md"),
-      readPrompt("generate-final.md"),
-      readPrompt("chat.md"),
-      readPrompt("chat-ask.md"),
-      readPrompt("chat-plan.md"),
-      readPrompt("sync-tdd.md"),
-      readPrompt("sync-preview.md"),
-      readPrompt("genre-loop.md"),
-    ]);
+  const [
+    quality,
+    generateFinal,
+    chat,
+    chatAsk,
+    chatPlan,
+    syncTdd,
+    syncPreview,
+    genreLoop,
+    verticalSlice,
+  ] = await Promise.all([
+    readPrompt("playable-quality.md"),
+    readPrompt("generate-final.md"),
+    readPrompt("chat.md"),
+    readPrompt("chat-ask.md"),
+    readPrompt("chat-plan.md"),
+    readPrompt("sync-tdd.md"),
+    readPrompt("sync-preview.md"),
+    readPrompt("genre-loop.md"),
+    readPrompt("vertical-slice.md"),
+  ]);
   return {
     quality,
     generateFinal,
@@ -31,6 +41,7 @@ export async function loadPromptPack() {
     syncTdd,
     syncPreview,
     genreLoop,
+    verticalSlice,
   };
 }
 
@@ -40,6 +51,8 @@ export function buildGenerateFinalPrompt({ slug, tddText, agentsMd, pack }) {
     agentsMd,
     "",
     pack.quality,
+    "",
+    pack.verticalSlice,
     "",
     pack.genreLoop,
     "",
@@ -114,6 +127,8 @@ export function buildChatPrompt({
     agentsMd,
     "",
     pack.quality,
+    "",
+    pack.verticalSlice,
     "",
     pack.genreLoop,
     "",

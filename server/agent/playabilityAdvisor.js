@@ -103,7 +103,7 @@ export function inferGenreHints(tddText = "") {
     hints.push({
       genre: "platformer",
       brief:
-        "Platformer loop: lateral steer + auto bounce/jump; depth/score on HUD; lose on fall/hazard; instant restart.",
+        "Platformer loop: lateral steer + auto bounce/jump; depth/score on HudKit HUD; lose on fall/hazard; JuiceKit on land/hit; instant restart.",
     });
   }
 
@@ -111,7 +111,7 @@ export function inferGenreHints(tddText = "") {
     hints.push({
       genre: "kart",
       brief:
-        "Kart/race loop: lap must increment on finish; race must Finish at totalLaps; HUD lap+position live; items = primitive+label (no image URLs).",
+        "Kart/race loop: PathKit track + lap increment on finish; race Finishes at totalLaps; HudKit lap/pos/speed; MinimapKit optional; JuiceKit on drift/boost; restart R.",
     });
   }
   if (collector) {
@@ -192,6 +192,41 @@ export async function advisePlayability({ root, tddText = "" }) {
   }
 
   const src = bundle.text;
+  const hasHudModule = bundle.files.includes("hud.js");
+  const hasJuiceModule = bundle.files.includes("juice.js");
+  if (!hasHudModule) {
+    advice.push({
+      id: "hud-module",
+      severity: "warn",
+      message: "Missing hud.js — vertical slice expects HudKit DOM HUD in a dedicated module.",
+      chatHint: "Add public/gameplay/hud.js using createHud from /runtime/HudKit.js; wire live stats",
+    });
+  }
+  if (!hasJuiceModule) {
+    advice.push({
+      id: "juice-module",
+      severity: "info",
+      message: "Missing juice.js — add JuiceKit feedback (shake/flash/hit-stop) on hits, pickups, win/lose.",
+      chatHint: "Add public/gameplay/juice.js with createJuice from /runtime/JuiceKit.js",
+    });
+  }
+  if (hasHudModule && !/HudKit|createHud/.test(src)) {
+    advice.push({
+      id: "hudkit",
+      severity: "info",
+      message: "hud.js may not use HudKit — prefer createHud panels over raw debug divs.",
+      chatHint: "import { createHud } from '/runtime/HudKit.js' and update stats each frame",
+    });
+  }
+  if (hasJuiceModule && !/JuiceKit|createJuice/.test(src)) {
+    advice.push({
+      id: "juicekit",
+      severity: "info",
+      message: "juice.js may not use JuiceKit — wire shake/flash on gameplay events.",
+      chatHint: "import { createJuice } from '/runtime/JuiceKit.js'",
+    });
+  }
+
   if (!/\bexport\s+async\s+function\s+mount\b/.test(src) && !/\bexport\s+function\s+mount\b/.test(src)) {
     advice.push({
       id: "mount-export",

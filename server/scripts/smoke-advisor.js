@@ -36,8 +36,8 @@ if (platformHints.some((h) => h.genre === "platformer") && !platformHints.some((
 } else fail("expected platformer without kart");
 
 const brief = buildGenreBrief(kartTdd);
-if (/lap must increment/i.test(brief)) ok("buildGenreBrief includes lap contract");
-else fail("genre brief missing lap contract");
+if (/lap increment|PathKit track/i.test(brief)) ok("buildGenreBrief includes kart contract");
+else fail("genre brief missing kart contract");
 
 const report = await advisePlayability({ root: ROOT, tddText: kartTdd });
 if (report.ok !== true) fail("advisor must always ok:true");

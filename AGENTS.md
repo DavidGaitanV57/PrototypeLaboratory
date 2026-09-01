@@ -31,7 +31,7 @@ export async function unmount() { ... }
 
 Entry for a generated build: `public/gameplay/main.js`.
 
-Import runtime helpers from `/runtime/*.js` (Engine, SceneKit, Input, EventBus, Primitives, CameraRig). Do not rewrite the runtime.
+Import runtime helpers from `/runtime/*.js` (Engine, SceneKit, Input, EventBus, Primitives, CameraRig, **HudKit, JuiceKit, PathKit, MinimapKit**). Do not rewrite the runtime.
 
 When the TDD names Unity systems (NavMesh, NavMeshAgent, Rigidbody, UI Toolkit), implement web equivalents **only in gameplay code**. Do not rewrite those names in the TDD.
 
@@ -40,17 +40,17 @@ When the TDD names Unity systems (NavMesh, NavMeshAgent, Rigidbody, UI Toolkit),
 
 ## Playable quality bar (reference-grade mechanics, graybox art)
 
-Generated prototypes must feel like complete short games using **primitives or compositions of primitives** (boxes, capsules, cylinders, spheres, planes). No textures/PBR/glTF required.
+Generated prototypes must feel like **playable vertical slices** — short games that are fun for 1–2 minutes — using **primitives or compositions of primitives** (boxes, capsules, cylinders, spheres, planes). No textures/PBR/glTF required.
 
 Required:
 
 1. Readable fantasy in under 3 seconds (player + world silhouettes with role).
 2. Full loop: start → core verb → win/lose or round → restart without a full page reload.
 3. Explicit controls (HUD or binding overlay) and delta-time movement.
-4. Live HUD state (score, timer, ammo, mode, etc. as the TDD implies) — never module-title panels.
-5. NPCs/props when the TDD implies them — distinct meshes, updated every frame.
-6. Genre-appropriate camera.
-7. Light juice: hit-stop, shake, or color flash on matte materials.
+4. **`hud.js`** with **HudKit** — live HUD state (score, timer, ammo, mode, laps, etc. as the TDD implies) — never module-title panels.
+5. **`juice.js`** with **JuiceKit** — shake, flash, or hit-stop on meaningful events.
+6. NPCs/props when the TDD implies them — distinct meshes, updated every frame.
+7. Genre-appropriate camera and world landmarks (not empty grid alone).
 
 Fail examples: lone blue cube on empty plane; mechanics with no win/lose; HUD listing file names.
 

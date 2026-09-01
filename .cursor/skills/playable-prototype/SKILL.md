@@ -12,7 +12,8 @@ description: >-
 
 - Write only `public/gameplay/**`. Never edit `public/runtime/**`, lab UI, or `server/`.
 - Entry: `public/gameplay/main.js` with `export async function mount(canvas, { hudRoot })` and `unmount()`.
-- Import helpers from `/runtime/*.js` (Engine, SceneKit, Input, EventBus, Primitives, CameraRig).
+- **Required modules:** `hud.js` (HudKit), `juice.js` (JuiceKit), plus mechanic modules as needed.
+- Import helpers from `/runtime/*.js` (Engine, SceneKit, Input, EventBus, Primitives, CameraRig, **HudKit, JuiceKit, PathKit, MinimapKit**).
 - Graybox only: primitives + matte colors. Items = mesh + short label/emoji — no remote image URLs unless asked.
 - Keep game HUD off the **bottom-right** (lab chrome lives there). Prefer returning `{ sceneKit }` from `mount`.
 
@@ -25,8 +26,12 @@ description: >-
 
 - Lap **must increment** on a real finish/checkpoint cycle.
 - At `totalLaps`, race **Finishes**, show result, restart (often `R`) without reload.
-- Live HUD: position + lap current/total.
+- Live HUD: position + lap current/total + speed; PathKit/MinimapKit when track/minimap implied.
 - Never ship a race that never ends because laps are decorative.
+
+### Platformer / endless vertical
+
+- Live height/score on HUD; lose on fall/hazard; landmarks in the column.
 
 ### Collector
 
@@ -36,14 +41,18 @@ description: >-
 
 - Clear win/lose; NPCs update every frame; rematch without reload.
 
-## Quality bar
+### Stealth
 
-Readable fantasy in &lt;3s, full loop, delta-time movement, live HUD, light juice (flash/shake).  
-Fail: lone cube, no win/lose, HUD listing filenames.
+- Alert/objective on HUD; extract win; detection lose.
+
+## Quality bar (vertical slice)
+
+Readable fantasy in &lt;3s, full loop, delta-time movement, **HudKit live HUD**, **JuiceKit feedback**, world landmarks.  
+Fail: lone cube on empty plane; static HUD; HUD listing filenames; no juice on events.
 
 ## Chat iteration
 
-Tune feel/numbers/juice. If soft playability hints mention laps/finish/restart, fix those first when relevant.  
+Tune feel/numbers/juice/HUD. If soft playability hints mention laps/finish/restart/hud.js, fix those first when relevant.  
 End with a short summary of what changed and how to verify in play.
 
 ## Soft checks
