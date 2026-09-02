@@ -116,16 +116,51 @@
         <div id="hudRoot" class="hud-root"></div>
 
         <div class="play-chrome" data-plab-ui>
-          <button type="button" id="skyBtn" class="icon-btn" title="Day / night" aria-label="Toggle day night">
-            <span id="skyIcon"></span>
-          </button>
-          <button type="button" id="chatToggle" class="btn btn--ghost btn--sm">Chat</button>
-          <button type="button" id="syncBtn" class="btn btn--accent btn--sm">Sync TDD</button>
-          <button type="button" id="exportPlayBtn" class="btn btn--ghost btn--sm" hidden>Export</button>
-          <button type="button" id="reloadBtn" class="btn btn--ghost btn--sm">Reload</button>
+          <div class="play-menu" id="playMenu">
+            <button
+              type="button"
+              id="playMenuTrigger"
+              class="icon-btn play-menu__trigger"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              title="Lab tools"
+              aria-label="Lab tools"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="11 17 6 12 11 7"></polyline>
+                <polyline points="18 17 13 12 18 7"></polyline>
+              </svg>
+            </button>
+            <div id="playMenuPopover" class="play-menu__popover" hidden role="menu" aria-label="Lab tools">
+              <button type="button" id="skyBtn" class="play-menu__item" role="menuitem" title="Day / night">
+                <span id="skyIcon" class="play-menu__icon"></span>
+                <span class="play-menu__label">Day / Night</span>
+              </button>
+              <button type="button" id="chatToggle" class="play-menu__item" role="menuitem">
+                <span class="play-menu__label">Chat</span>
+              </button>
+              <button type="button" id="syncBtn" class="play-menu__item play-menu__item--accent" role="menuitem">
+                <span class="play-menu__label">Sync TDD</span>
+              </button>
+              <button type="button" id="exportPlayBtn" class="play-menu__item" role="menuitem" hidden>
+                <span class="play-menu__label">Export</span>
+              </button>
+              <button type="button" id="reloadBtn" class="play-menu__item" role="menuitem">
+                <span class="play-menu__label">Reload</span>
+              </button>
+            </div>
+          </div>
         </div>
 
         <aside id="chatDrawer" class="chat-drawer" data-plab-ui hidden>
+          <div
+            id="chatResizeHandle"
+            class="chat-drawer__resize"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize chat"
+            title="Drag to resize"
+          ></div>
           <header class="chat-drawer__head">
             <div class="chat-drawer__title">
               <strong>Iterate</strong>
@@ -135,103 +170,108 @@
           </header>
           <div id="chatLog" class="chat-log"></div>
           <form id="chatForm" class="chat-form">
-            <div class="model-picker model-picker--mode" id="chatModePicker">
-              <button
-                type="button"
-                id="chatModeTrigger"
-                class="model-picker__trigger"
-                aria-haspopup="dialog"
-                aria-expanded="false"
-                title="Chat mode (Left Shift+Tab)"
-              >
-                <span id="chatModeTriggerText">Agent</span>
-                <span class="model-picker__chev" aria-hidden="true"></span>
-              </button>
-              <div
-                id="chatModePopover"
-                class="model-picker__popover model-picker__popover--up model-picker__popover--mode"
-                hidden
-                role="dialog"
-                aria-label="Chat mode"
-              >
-                <p id="chatModeBlurb" class="model-picker__blurb">
-                  Edits gameplay files under public/gameplay.
-                </p>
-                <div class="model-picker__options model-picker__options--modes">
-                  <button type="button" class="model-picker__option is-active" data-mode="agent" id="chatModeAgent">
-                    <span class="model-picker__option-main">
-                      <span class="model-picker__option-title">Agent</span>
-                      <span class="model-picker__option-desc">Edit gameplay files</span>
-                    </span>
-                  </button>
-                  <button type="button" class="model-picker__option" data-mode="ask" id="chatModeAsk">
-                    <span class="model-picker__option-main">
-                      <span class="model-picker__option-title">Ask</span>
-                      <span class="model-picker__option-desc">Diagnose only, no writes</span>
-                    </span>
-                  </button>
-                  <button type="button" class="model-picker__option" data-mode="plan" id="chatModePlan">
-                    <span class="model-picker__option-main">
-                      <span class="model-picker__option-title">Plan</span>
-                      <span class="model-picker__option-desc">Read-only implementation plan</span>
-                    </span>
-                  </button>
-                </div>
-              </div>
-            </div>
-            <input
+            <textarea
               id="chatInput"
-              type="text"
+              rows="1"
               placeholder="Tune feel, or ask why AI stuck on power-up…"
               autocomplete="off"
-            />
-            <div class="model-picker model-picker--chat" id="chatPicker">
-              <button
-                type="button"
-                id="chatPickerTrigger"
-                class="model-picker__trigger"
-                aria-haspopup="dialog"
-                aria-expanded="false"
-                title="Provider & model"
-              >
-                <span id="chatPickerTriggerText">Auto</span>
-                <span class="model-picker__chev" aria-hidden="true"></span>
-              </button>
-              <select id="chatProviderSelect" class="model-picker__native" tabindex="-1" aria-hidden="true"></select>
-              <select id="chatModelSelect" class="model-picker__native" tabindex="-1" aria-hidden="true"></select>
-              <input id="chatModelCustom" type="text" class="model-picker__native" placeholder="custom id" hidden />
-              <div id="chatPickerPopover" class="model-picker__popover model-picker__popover--up" hidden role="dialog" aria-label="Provider and model">
-                <p id="chatPickerBlurb" class="model-picker__blurb"></p>
-                <div class="model-picker__body" data-view="home">
-                  <div class="model-picker__home">
-                    <button type="button" class="model-picker__nav" data-goto="provider">
-                      <span class="model-picker__nav-main">
-                        <span class="model-picker__nav-k">Provider</span>
-                        <span class="model-picker__nav-v" data-bind="provider"></span>
+              spellcheck="false"
+            ></textarea>
+            <div class="chat-form__toolbar">
+              <div class="model-picker model-picker--mode" id="chatModePicker">
+                <button
+                  type="button"
+                  id="chatModeTrigger"
+                  class="model-picker__trigger"
+                  aria-haspopup="dialog"
+                  aria-expanded="false"
+                  title="Chat mode (Left Shift+Tab)"
+                >
+                  <span id="chatModeTriggerText">Agent</span>
+                  <span class="model-picker__chev" aria-hidden="true"></span>
+                </button>
+                <div
+                  id="chatModePopover"
+                  class="model-picker__popover model-picker__popover--up model-picker__popover--mode"
+                  hidden
+                  role="dialog"
+                  aria-label="Chat mode"
+                >
+                  <p id="chatModeBlurb" class="model-picker__blurb">
+                    Edits gameplay files under public/gameplay.
+                  </p>
+                  <div class="model-picker__options model-picker__options--modes">
+                    <button type="button" class="model-picker__option is-active" data-mode="agent" id="chatModeAgent">
+                      <span class="model-picker__option-main">
+                        <span class="model-picker__option-title">Agent</span>
+                        <span class="model-picker__option-desc">Edit gameplay files</span>
                       </span>
-                      <span class="model-picker__nav-chev" aria-hidden="true"></span>
                     </button>
-                    <button type="button" class="model-picker__nav" data-goto="model">
-                      <span class="model-picker__nav-main">
-                        <span class="model-picker__nav-k">Model</span>
-                        <span class="model-picker__nav-v" data-bind="model"></span>
+                    <button type="button" class="model-picker__option" data-mode="ask" id="chatModeAsk">
+                      <span class="model-picker__option-main">
+                        <span class="model-picker__option-title">Ask</span>
+                        <span class="model-picker__option-desc">Diagnose only, no writes</span>
                       </span>
-                      <span class="model-picker__nav-chev" aria-hidden="true"></span>
                     </button>
-                  </div>
-                  <div class="model-picker__panel" data-panel="provider" hidden>
-                    <button type="button" class="model-picker__back" data-goto="home">Provider</button>
-                    <div class="model-picker__options" data-options="provider"></div>
-                  </div>
-                  <div class="model-picker__panel" data-panel="model" hidden>
-                    <button type="button" class="model-picker__back" data-goto="home">Model</button>
-                    <div class="model-picker__options" data-options="model"></div>
-                    <input type="text" class="model-picker__custom" data-custom placeholder="Custom model id…" hidden />
+                    <button type="button" class="model-picker__option" data-mode="plan" id="chatModePlan">
+                      <span class="model-picker__option-main">
+                        <span class="model-picker__option-title">Plan</span>
+                        <span class="model-picker__option-desc">Read-only implementation plan</span>
+                      </span>
+                    </button>
                   </div>
                 </div>
               </div>
+              <div class="chat-form__toolbar-end">
+                <div class="model-picker model-picker--chat" id="chatPicker">
+                  <button
+                    type="button"
+                    id="chatPickerTrigger"
+                    class="model-picker__trigger"
+                    aria-haspopup="dialog"
+                    aria-expanded="false"
+                    title="Provider & model"
+                  >
+                    <span id="chatPickerTriggerText">Auto</span>
+                    <span class="model-picker__chev" aria-hidden="true"></span>
+                  </button>
+                  <select id="chatProviderSelect" class="model-picker__native" tabindex="-1" aria-hidden="true"></select>
+                  <select id="chatModelSelect" class="model-picker__native" tabindex="-1" aria-hidden="true"></select>
+                  <input id="chatModelCustom" type="text" class="model-picker__native" placeholder="custom id" hidden />
+                  <div id="chatPickerPopover" class="model-picker__popover model-picker__popover--up" hidden role="dialog" aria-label="Provider and model">
+                    <p id="chatPickerBlurb" class="model-picker__blurb"></p>
+                    <div class="model-picker__body" data-view="home">
+                      <div class="model-picker__home">
+                        <button type="button" class="model-picker__nav" data-goto="provider">
+                          <span class="model-picker__nav-main">
+                            <span class="model-picker__nav-k">Provider</span>
+                            <span class="model-picker__nav-v" data-bind="provider"></span>
+                          </span>
+                          <span class="model-picker__nav-chev" aria-hidden="true"></span>
+                        </button>
+                        <button type="button" class="model-picker__nav" data-goto="model">
+                          <span class="model-picker__nav-main">
+                            <span class="model-picker__nav-k">Model</span>
+                            <span class="model-picker__nav-v" data-bind="model"></span>
+                          </span>
+                          <span class="model-picker__nav-chev" aria-hidden="true"></span>
+                        </button>
+                      </div>
+                      <div class="model-picker__panel" data-panel="provider" hidden>
+                        <button type="button" class="model-picker__back" data-goto="home">Provider</button>
+                        <div class="model-picker__options" data-options="provider"></div>
+                      </div>
+                      <div class="model-picker__panel" data-panel="model" hidden>
+                        <button type="button" class="model-picker__back" data-goto="home">Model</button>
+                        <div class="model-picker__options" data-options="model"></div>
+                        <input type="text" class="model-picker__custom" data-custom placeholder="Custom model id…" hidden />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <button type="submit" class="btn btn--primary btn--sm chat-form__send" aria-label="Send">↑</button>
+              </div>
             </div>
-            <button type="submit" class="btn btn--primary btn--sm chat-form__send" aria-label="Send">↑</button>
           </form>
           <button type="button" id="chatContinueBtn" class="btn btn--accent btn--sm chat-continue" hidden>
             Continue checkpoint

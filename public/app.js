@@ -21,8 +21,12 @@ const canvas = document.getElementById("gameCanvas");
 const hudRoot = document.getElementById("hudRoot");
 const skyBtn = document.getElementById("skyBtn");
 const skyIcon = document.getElementById("skyIcon");
+const playMenu = document.getElementById("playMenu");
+const playMenuTrigger = document.getElementById("playMenuTrigger");
+const playMenuPopover = document.getElementById("playMenuPopover");
 const chatToggle = document.getElementById("chatToggle");
 const chatDrawer = document.getElementById("chatDrawer");
+const chatResizeHandle = document.getElementById("chatResizeHandle");
 const chatClose = document.getElementById("chatClose");
 const chatLog = document.getElementById("chatLog");
 const chatForm = document.getElementById("chatForm");
@@ -712,12 +716,89 @@ function setChatOpen(open) {
   chatToggle.setAttribute("aria-expanded", open ? "true" : "false");
   updateGameInputBlock();
   if (open) {
+    applyChatDrawerWidth(readChatDrawerWidth());
     syncChatProviderControls();
     requestAnimationFrame(() => chatInput?.focus?.());
   } else if (!playEl.hidden) {
     requestAnimationFrame(() => canvas?.focus?.());
   }
 }
+
+const CHAT_WIDTH_KEY = "plab.chatWidth";
+const CHAT_WIDTH_MIN = 280;
+const CHAT_WIDTH_MAX = 720;
+const CHAT_WIDTH_DEFAULT = 400;
+
+function clampChatWidth(px) {
+  const vw = Math.max(320, window.innerWidth || 800);
+  const max = Math.min(CHAT_WIDTH_MAX, Math.floor(vw * 0.92));
+  return Math.max(CHAT_WIDTH_MIN, Math.min(max, Math.round(px)));
+}
+
+function readChatDrawerWidth() {
+  const raw = Number(localStorage.getItem(CHAT_WIDTH_KEY));
+  if (Number.isFinite(raw) && raw > 0) return clampChatWidth(raw);
+  return CHAT_WIDTH_DEFAULT;
+}
+
+function applyChatDrawerWidth(px) {
+  if (!chatDrawer) return;
+  const w = clampChatWidth(px);
+  chatDrawer.style.setProperty("--chat-w", `${w}px`);
+  return w;
+}
+
+function bindChatDrawerResize() {
+  if (!chatResizeHandle || !chatDrawer) return;
+  let dragging = false;
+
+  function onMove(e) {
+    if (!dragging) return;
+    const x = e.touches?.[0]?.clientX ?? e.clientX;
+    const next = clampChatWidth(window.innerWidth - x);
+    applyChatDrawerWidth(next);
+  }
+
+  function onUp() {
+    if (!dragging) return;
+    dragging = false;
+    chatDrawer.classList.remove("is-resizing");
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    const w = readComputedChatWidth();
+    localStorage.setItem(CHAT_WIDTH_KEY, String(w));
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
+  }
+
+  function readComputedChatWidth() {
+    const raw = getComputedStyle(chatDrawer).getPropertyValue("--chat-w").trim();
+    const n = Number.parseFloat(raw);
+    return Number.isFinite(n) ? clampChatWidth(n) : CHAT_WIDTH_DEFAULT;
+  }
+
+  chatResizeHandle.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragging = true;
+    chatDrawer.classList.add("is-resizing");
+    document.body.style.cursor = "ew-resize";
+    document.body.style.userSelect = "none";
+    chatResizeHandle.setPointerCapture?.(e.pointerId);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  });
+
+  window.addEventListener("resize", () => {
+    if (!chatDrawer.hidden) applyChatDrawerWidth(readChatDrawerWidth());
+  });
+
+  applyChatDrawerWidth(readChatDrawerWidth());
+}
+
+bindChatDrawerResize();
 
 function logStart(line) {
   startLog.hidden = false;
@@ -2197,6 +2278,38 @@ benchmarkOverlay?.addEventListener("click", (e) => {
   if (e.target === benchmarkOverlay) setBenchmarkOpen(false);
 });
 
+function setPlayMenuOpen(open) {
+  if (!playMenuPopover || !playMenuTrigger) return;
+  playMenuPopover.hidden = !open;
+  playMenuTrigger.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function isPlayMenuOpen() {
+  return playMenuPopover && !playMenuPopover.hidden;
+}
+
+playMenuTrigger?.addEventListener("click", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  setPlayMenuOpen(!isPlayMenuOpen());
+});
+
+playMenuPopover?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const item = e.target.closest?.(".play-menu__item");
+  if (item) setPlayMenuOpen(false);
+});
+
+document.addEventListener("click", (e) => {
+  if (!isPlayMenuOpen()) return;
+  if (playMenu?.contains(e.target)) return;
+  setPlayMenuOpen(false);
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && isPlayMenuOpen()) setPlayMenuOpen(false);
+});
+
 skyBtn.addEventListener("click", async () => {
   const { getActiveSceneKit, toggleSkyMode, writeSkyMode, readSkyMode } = await import(
     "/runtime/SceneKit.js"
@@ -2285,8 +2398,26 @@ chatForm.addEventListener("submit", async (e) => {
   const message = chatInput.value.trim();
   if (!message) return;
   chatInput.value = "";
+  resizeChatInput();
   await sendChatTurn(message);
 });
+
+function resizeChatInput() {
+  if (!chatInput) return;
+  chatInput.style.height = "0px";
+  const scroll = chatInput.scrollHeight;
+  const max = Math.min(window.innerHeight * 0.48, 256);
+  chatInput.style.height = `${Math.min(Math.max(scroll, 22), max)}px`;
+  chatInput.style.overflowY = scroll > max ? "auto" : "hidden";
+}
+
+chatInput?.addEventListener("input", resizeChatInput);
+chatInput?.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.shiftKey) return;
+  e.preventDefault();
+  chatForm?.requestSubmit?.();
+});
+resizeChatInput();
 
 async function sendChatTurn(message, { displayText } = {}) {
   const mode = chatMode;
