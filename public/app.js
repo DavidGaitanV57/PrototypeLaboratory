@@ -1935,7 +1935,7 @@ async function runExportBuild() {
   showWorkOverlay({
     title: "Export playable",
     eyebrow: "Save",
-    status: destination || suggested,
+    status: "Copying gameplay + runtime…",
   });
   appendWorkLog(`target: ${destination || suggested}`);
   try {
@@ -1945,12 +1945,11 @@ async function runExportBuild() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+    setWorkStatus(`Exported · ${result.filesCopied} files`);
     appendWorkLog(`copied ${result.filesCopied} files`);
-    appendWorkLog(`destination: ${result.destination}`);
-    appendWorkLog("cd into that folder and run: node server.mjs");
-    appendWorkLog("then open http://127.0.0.1:8080/");
-    setWorkStatus(`Playable → ${result.destination}`);
-    setTimeout(hideWorkOverlay, 1800);
+    appendWorkLog(result.destination);
+    appendWorkLog("cd into that folder → node server.mjs → http://127.0.0.1:8080/");
+    setTimeout(hideWorkOverlay, 2200);
   } catch (err) {
     appendWorkLog(String(err.message || err));
     setWorkStatus(String(err.message || err));

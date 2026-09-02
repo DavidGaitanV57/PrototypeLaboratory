@@ -22,6 +22,36 @@
   box-sizing: border-box;
 }
 
+/* Scrollable without visible scrollbar (overlays / popovers) */
+.plab-scroll,
+.work-log,
+.bench-card,
+.sync-review__list,
+.model-picker__options,
+.plan-review__compose textarea,
+.chat-log,
+.benchmark__history,
+.benchmark__stat--danger dd,
+.ping-model-list {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.plab-scroll::-webkit-scrollbar,
+.work-log::-webkit-scrollbar,
+.bench-card::-webkit-scrollbar,
+.sync-review__list::-webkit-scrollbar,
+.model-picker__options::-webkit-scrollbar,
+.plan-review__compose textarea::-webkit-scrollbar,
+.chat-log::-webkit-scrollbar,
+.benchmark__history::-webkit-scrollbar,
+.benchmark__stat--danger dd::-webkit-scrollbar,
+.ping-model-list::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 html,
 body {
   margin: 0;
@@ -1518,13 +1548,15 @@ body:has(.chat-drawer.is-resizing) {
 }
 
 .work-card {
-  width: min(28rem, 100%);
+  width: min(32rem, 100%);
+  max-width: 100%;
   padding: 1.25rem 1.35rem;
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: var(--r);
   display: grid;
   gap: 0.55rem;
+  overflow: hidden;
 }
 
 .work-card__eyebrow {
@@ -1540,12 +1572,16 @@ body:has(.chat-drawer.is-resizing) {
   margin: 0;
   font-family: var(--font-display);
   font-size: 1.35rem;
+  overflow-wrap: anywhere;
 }
 
 .work-card__status {
   margin: 0;
   color: var(--paper);
   font-size: 0.95rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .work-card__elapsed {
@@ -1571,4 +1607,6 @@ body:has(.chat-drawer.is-resizing) {
 
 .work-log li {
   margin: 0.15rem 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
