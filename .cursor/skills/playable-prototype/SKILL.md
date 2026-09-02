@@ -19,7 +19,7 @@ description: >-
 
 ## Build the loop from the TDD
 
-1. Read `docs/tdds/<slug>/TDD.md` §3 core loop, §B mechanics, §11.3 input, §11.5 camera.
+1. Read `docs/tdds/<slug>/` active TDD (`TDD.md` preferred) §3 core loop, §B mechanics, §11.3 input, §11.5 camera.
 2. Infer genre and obey the matching contract:
 
 ### Kart / race

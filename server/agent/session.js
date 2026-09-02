@@ -246,6 +246,7 @@ export async function createSession({ root, tddsRoot, slug }) {
         const prompt = buildGenerateFinalPrompt({
           slug,
           tddText: tdd.text,
+          tddRelPath: tdd.relPath,
           agentsMd,
           pack,
         });
@@ -432,6 +433,7 @@ export async function createSession({ root, tddsRoot, slug }) {
         const prompt = buildSyncPreviewPrompt({
           slug,
           tddText: tdd.text,
+          tddRelPath: tdd.relPath,
           summary:
             summary ||
             "List TDD updates implied by the current playable vs the spec.",
@@ -482,6 +484,7 @@ export async function createSession({ root, tddsRoot, slug }) {
         const prompt = buildSyncPrompt({
           slug,
           tddText: tdd.text,
+          tddRelPath: tdd.relPath,
           summary:
             summary ||
             (digest

@@ -6,7 +6,7 @@ The operator pressed **Sync TDD**. Do **not** write any files. Compare the playa
 
 - Only use read tools (`list_dir`, `read_file`).
 - Never call `write_file`.
-- Stay in `public/gameplay/**` and `docs/tdds/<slug>/TDD.md`.
+- Stay in `public/gameplay/**` and the active TDD under `docs/tdds/<slug>/`.
 - Unity vocabulary in titles/details (NavMesh, UI Toolkit, MonoBehaviour). No lab/web jargon in the proposal text.
 
 ## What to propose

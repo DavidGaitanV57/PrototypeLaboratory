@@ -8,7 +8,7 @@ This is a local web lab that reads a V57 Technical Design Document (TDD) and gen
 
 ## Source of truth
 
-- Canonical game design lives only in `docs/tdds/<slug>/TDD.md`.
+- Canonical game design lives in `docs/tdds/<slug>/` — prefer `TDD.md`; if missing, the lab loads the primary `.md` in that folder (version snaps `TDD.v*.md` are ignored).
 - Sync may update mechanic rules, numbers, states, acceptance criteria, input, and camera fields in that file.
 - Never write: lab, prototype laboratory, Three.js, WebGL, tabs, sandbox paths, or “edited in the lab” into the TDD.
 - Keep Unity vocabulary in the TDD (NavMesh, MonoBehaviour, ScriptableObject, `Assets/...`).
@@ -18,7 +18,7 @@ This is a local web lab that reads a V57 Technical Design Document (TDD) and gen
 | Mode | Allowed paths | Forbidden |
 |------|---------------|-----------|
 | Generate Final / Chat | `public/gameplay/**` | `public/runtime/**`, `public/index.html`, `public/app.js`, `public/styles.css`, `server/**`, `AGENTS.md` |
-| Sync TDD | `docs/tdds/<slug>/TDD.md` only | Any other path; lab meta in TDD content |
+| Sync TDD | `docs/tdds/<slug>/*.md` (active TDD only; not `TDD.v*.md` snaps) | Any other path; lab meta in TDD content |
 
 ## Runtime contract
 

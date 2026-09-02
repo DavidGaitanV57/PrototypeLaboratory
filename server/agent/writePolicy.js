@@ -44,8 +44,13 @@ export function assertAgentWriteAllowed(rel, mode = "generate", opts = {}) {
     if (!slug || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(slug)) {
       throw new Error("Sync requires a valid slug");
     }
-    const ok = r === `docs/tdds/${slug}/TDD.md`;
-    if (!ok) throw new Error(`Sync may only write docs/tdds/<slug>/TDD.md (got ${r})`);
+    // Active TDD may be TDD.md or another .md in the slug folder (not version snaps).
+    const m = r.match(new RegExp(`^docs/tdds/${slug}/([^/]+\\.md)$`, "i"));
+    const file = m?.[1] || "";
+    const ok = Boolean(m) && !/^TDD\.v\d+\.\d+\.\d+\.md$/i.test(file);
+    if (!ok) {
+      throw new Error(`Sync may only write docs/tdds/<slug>/*.md (got ${r})`);
+    }
     return;
   }
   if (isKernelPath(r)) throw new Error(`Write not allowed (runtime/lab): ${r}`);

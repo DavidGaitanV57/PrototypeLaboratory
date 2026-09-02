@@ -45,8 +45,9 @@ export async function loadPromptPack() {
   };
 }
 
-export function buildGenerateFinalPrompt({ slug, tddText, agentsMd, pack }) {
+export function buildGenerateFinalPrompt({ slug, tddText, agentsMd, pack, tddRelPath }) {
   const genreBrief = buildGenreBrief(tddText);
+  const tddPath = tddRelPath || `docs/tdds/${slug}/TDD.md`;
   return [
     agentsMd,
     "",
@@ -61,7 +62,7 @@ export function buildGenerateFinalPrompt({ slug, tddText, agentsMd, pack }) {
     pack.generateFinal,
     "",
     `## Active TDD slug: ${slug}`,
-    `Path: docs/tdds/${slug}/TDD.md`,
+    `Path: ${tddPath}`,
     "",
     "## TDD contents",
     tddText,
@@ -162,12 +163,14 @@ export function buildSyncPreviewPrompt({
   gameplayFiles = [],
   root,
   pack,
+  tddRelPath,
 }) {
+  const tddPath = tddRelPath || `docs/tdds/${slug}/TDD.md`;
   return [
     pack.syncPreview,
     "",
     `Project root: ${root || "."}`,
-    `TDD path: docs/tdds/${slug}/TDD.md`,
+    `TDD path: ${tddPath}`,
     "",
     "## Operator summary",
     summary || "List TDD updates implied by the current playable.",
@@ -195,14 +198,16 @@ export function buildSyncPrompt({
   agentsMd,
   pack,
   selectedItems = "",
+  tddRelPath,
 }) {
+  const tddPath = tddRelPath || `docs/tdds/${slug}/TDD.md`;
   return [
     agentsMd,
     "",
     pack.syncTdd,
     "",
     `Project root: ${root || "."}`,
-    `TDD path: docs/tdds/${slug}/TDD.md`,
+    `TDD path: ${tddPath}`,
     "",
     "## Operator summary",
     summary || "Promote validated prototype changes into the TDD product spec.",
@@ -222,6 +227,6 @@ export function buildSyncPrompt({
     "## Current TDD",
     tddText,
     "",
-    "Edit ONLY docs/tdds/" + slug + "/TDD.md now.",
+    `Edit ONLY ${tddPath} now.`,
   ].join("\n");
 }

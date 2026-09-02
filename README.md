@@ -31,7 +31,7 @@ Copy `.env` from `tdd-prototype-lab` or fill `.env.example`. On the Start screen
 
 ## Layout
 
-- `docs/tdds/<slug>/TDD.md` — only product source of truth
+- `docs/tdds/<slug>/` — product TDD (`TDD.md` preferred; otherwise the primary `.md` in the folder)
 - `public/runtime/` — frozen Three.js runtime (sky/grid/graybox, input, primitives)
 - `public/gameplay/` — generated playable (wiped by Clean)
 - `AGENTS.md` + `server/agent/prompts/` — LLM-agnostic agent rules

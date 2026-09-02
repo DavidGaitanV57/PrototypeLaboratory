@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseMechanics } from "../tdd/parser.js";
+import { parseMechanics, listTdds, resolveTddFile } from "../tdd/parser.js";
 import { findLabSpeak } from "../tdd/antiLabSpeak.js";
 import { assertAgentWriteAllowed } from "../agent/writePolicy.js";
 import {
@@ -57,6 +57,20 @@ try {
   fail(e.message);
 }
 try {
+  assertAgentWriteAllowed("docs/tdds/TDD_ThresholdRooms/ThresholdRooms.md", "sync", {
+    slug: "TDD_ThresholdRooms",
+  });
+  ok("writePolicy sync alternate TDD filename");
+} catch (e) {
+  fail(e.message);
+}
+try {
+  assertAgentWriteAllowed("docs/tdds/CoinRush/TDD.v2.0.0.md", "sync", { slug: "CoinRush" });
+  fail("sync should block version snapshot writes");
+} catch {
+  ok("writePolicy blocks TDD.v* snapshot sync writes");
+}
+try {
   assertAgentWriteAllowed("public/gameplay/main.js", "plan");
   fail("plan write should be blocked");
 } catch {
@@ -110,6 +124,34 @@ if (text) {
   const hits = findLabSpeak(text);
   if (hits.length) fail(`lab speak in seed TDD: ${hits[0].text}`);
   else ok("seed TDD unity-clean");
+}
+
+const tddsRoot = path.join(ROOT, "docs", "tdds");
+try {
+  const listed = await listTdds(tddsRoot);
+  ok(`listTdds found ${listed.length} slug(s)`);
+  const thr = listed.find((t) => t.slug === "TDD_ThresholdRooms");
+  if (thr) {
+    if (thr.fileName === "ThresholdRooms.md") ok("listTdds loads non-TDD.md filename");
+    else fail(`ThresholdRooms unexpected file: ${thr.fileName}`);
+    const resolved = await resolveTddFile(tddsRoot, "TDD_ThresholdRooms");
+    if (resolved.fileName === "ThresholdRooms.md") ok("resolveTddFile prefers folder markdown");
+    else fail(`unexpected resolve: ${resolved.fileName}`);
+  } else {
+    ok("listTdds skip ThresholdRooms (not in workspace)");
+  }
+  const lives = listed.find((t) => t.slug === "TDD_13Lives");
+  if (lives) {
+    if (lives.projectName !== "Untitled" && lives.mechanics?.length >= 1) {
+      ok(`TDD_13Lives readable (${lives.projectName}, ${lives.mechanics.length} mechs)`);
+    } else {
+      fail(`TDD_13Lives parse weak: name=${lives.projectName} mechs=${lives.mechanics?.length}`);
+    }
+  } else {
+    ok("listTdds skip TDD_13Lives (not in workspace)");
+  }
+} catch (e) {
+  fail(`listTdds/resolve: ${e.message}`);
 }
 
 await initProviderCatalog(ROOT);

@@ -19,7 +19,7 @@ Build ONE cohesive **vertical slice** playable prototype from the entire TDD.
 
 ## Reading order
 
-1. `docs/tdds/<slug>/TDD.md` — especially §B `## Mechanic:` blocks, §3 core loop, §11.3 input, §11.5 camera/control.
+1. Active TDD under `docs/tdds/<slug>/` (prefer `TDD.md`, else the primary `.md`) — especially §B `## Mechanic:` / `### Mechanic:` blocks, §3 core loop, §11.3 input, §11.5 camera/control.
 2. `AGENTS.md`, playable quality, vertical-slice, and genre-loop contracts (including the inferred loop brief).
 3. Runtime APIs under `public/runtime/` — **HudKit, JuiceKit, PathKit, MinimapKit**, Engine, SceneKit, Primitives, Input, CameraRig.
 

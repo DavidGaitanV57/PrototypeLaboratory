@@ -316,7 +316,7 @@ export async function exportBuild({
   try {
     const entries = await fs.readdir(tddDir);
     for (const entry of entries) {
-      if (/^TDD(\.v\d+\.\d+\.\d+)?\.md$/.test(entry) || entry === "CHANGELOG.md") {
+      if (/\.md$/i.test(entry)) {
         await safeCopyFile(path.join(tddDir, entry), path.join(tddOutDir, entry));
       }
     }

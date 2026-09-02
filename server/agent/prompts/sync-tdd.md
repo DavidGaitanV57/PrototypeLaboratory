@@ -22,7 +22,7 @@ Update the canonical TDD so Unity can build from it. The operator pressed **Sync
 
 
 
-- Only `docs/tdds/<slug>/TDD.md`
+- Only the active TDD markdown under `docs/tdds/<slug>/` (prefer `TDD.md`; not `TDD.v*.md` snaps)
 
 
 

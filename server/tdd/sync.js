@@ -1,11 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { assertUnityClean } from "./antiLabSpeak.js";
-import { assertSafeSlug } from "../security/paths.js";
+import { resolveTddFile } from "./parser.js";
 
 export async function finalizeTddSync(tddsRoot, slug) {
-  const safe = assertSafeSlug(slug);
-  const tddPath = path.join(tddsRoot, safe, "TDD.md");
+  const resolved = await resolveTddFile(tddsRoot, slug);
+  const tddPath = resolved.absPath;
   const text = await fs.readFile(tddPath, "utf8");
   assertUnityClean(text);
 
@@ -19,9 +19,9 @@ export async function finalizeTddSync(tddsRoot, slug) {
     nextVersion = `${major}.${minor}.${patch}`;
     nextText = text.replace(versionMatch[0], `Document version** | ${nextVersion}`);
     const snapName = `TDD.v${versionMatch[1]}.${versionMatch[2]}.${versionMatch[3]}.md`;
-    await fs.writeFile(path.join(tddsRoot, safe, snapName), text, "utf8");
+    await fs.writeFile(path.join(tddsRoot, resolved.slug, snapName), text, "utf8");
     await fs.writeFile(tddPath, nextText, "utf8");
   }
 
-  return { version: nextVersion, slug: safe };
+  return { version: nextVersion, slug: resolved.slug, fileName: resolved.fileName };
 }
