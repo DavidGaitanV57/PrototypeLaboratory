@@ -11,6 +11,9 @@ const pingModelBtn = document.getElementById("pingModelBtn");
 const pingModelsBtn = document.getElementById("pingModelsBtn");
 const pingStatus = document.getElementById("pingStatus");
 const pingModelList = document.getElementById("pingModelList");
+const pingMenu = document.getElementById("pingMenu");
+const pingMenuTrigger = document.getElementById("pingMenuTrigger");
+const pingMenuPopover = document.getElementById("pingMenuPopover");
 const generateBtn = document.getElementById("generateBtn");
 const continueBtn = document.getElementById("continueBtn");
 const exportBtn = document.getElementById("exportBtn");
@@ -1686,6 +1689,16 @@ function updateProviderHint() {
   }
 }
 
+function setPingMenuOpen(open) {
+  if (!pingMenuPopover || !pingMenuTrigger) return;
+  pingMenuPopover.hidden = !open;
+  pingMenuTrigger.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function isPingMenuOpen() {
+  return pingMenuPopover && !pingMenuPopover.hidden;
+}
+
 function setPingBusy(busy) {
   if (pingModelBtn) pingModelBtn.disabled = busy;
   if (pingModelsBtn) pingModelsBtn.disabled = busy;
@@ -1721,12 +1734,13 @@ function renderPingModelList(results) {
     const model = document.createElement("span");
     model.className = "ping-model-list__model";
     model.textContent = row.model || "—";
-    model.title = row.error || row.note || "";
     const meta = document.createElement("span");
     meta.className = "ping-model-list__meta";
-    meta.textContent = row.ok
-      ? `${row.ms ?? "?"}ms`
-      : String(row.error || `HTTP ${row.status || "?"}`).slice(0, 48);
+    const detail = row.ok
+      ? `${row.ms ?? "?"}ms${row.note ? ` · ${row.note}` : ""}`
+      : String(row.error || row.note || `HTTP ${row.status || "?"}`);
+    meta.textContent = detail;
+    meta.title = detail;
     li.append(mark, model, meta);
     pingModelList.appendChild(li);
   }
@@ -1736,9 +1750,11 @@ async function pingSelectedModel() {
   const id = providerSelect?.value;
   const model = selectedModelValue();
   if (!id || !model) {
+    setPingMenuOpen(true);
     setPingStatus("Pick a provider and model first.", "fail");
     return;
   }
+  setPingMenuOpen(true);
   clearPingModelList();
   setPingBusy(true);
   setPingStatus(`Pinging ${id} / ${model}…`, "busy");
@@ -1773,6 +1789,7 @@ async function pingSelectedModel() {
 async function pingAllSuggestedModels() {
   const id = providerSelect?.value;
   if (!id) {
+    setPingMenuOpen(true);
     setPingStatus("Pick a provider first.", "fail");
     return;
   }
@@ -1787,6 +1804,7 @@ async function pingAllSuggestedModels() {
   };
   push(selectedModelValue());
   for (const m of p?.suggestedModels || []) push(m);
+  setPingMenuOpen(true);
   clearPingModelList();
   setPingBusy(true);
   setPingStatus(`Pinging ${models.length} model${models.length === 1 ? "" : "s"} on ${p?.label || id}…`, "busy");
@@ -2184,6 +2202,24 @@ continueBtn.addEventListener("click", async () => {
   } finally {
     continueBtn.disabled = false;
   }
+});
+
+pingMenuTrigger?.addEventListener("click", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  setPingMenuOpen(!isPingMenuOpen());
+});
+
+pingMenuPopover?.addEventListener("click", (e) => e.stopPropagation());
+
+document.addEventListener("click", (e) => {
+  if (!isPingMenuOpen()) return;
+  if (pingMenu?.contains(e.target)) return;
+  setPingMenuOpen(false);
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && isPingMenuOpen()) setPingMenuOpen(false);
 });
 
 pingModelBtn?.addEventListener("click", () => pingSelectedModel());
