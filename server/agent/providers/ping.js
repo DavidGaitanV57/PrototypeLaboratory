@@ -23,6 +23,22 @@ function isAnthropicUrl(url) {
   }
 }
 
+/** Newer OpenAI chat models reject max_tokens; others still require it. */
+function prefersMaxCompletionTokens(model) {
+  const id = String(model || "")
+    .toLowerCase()
+    .replace(/^openai\//, "");
+  return /^(gpt-5|gpt-6|o1|o3|o4)([\-./]|$)/.test(id);
+}
+
+function tokenLimitBody(model, useCompletionTokens) {
+  return useCompletionTokens ? { max_completion_tokens: 8 } : { max_tokens: 8 };
+}
+
+function wantsMaxCompletionTokens(detail) {
+  return /max_completion_tokens/i.test(String(detail || ""));
+}
+
 /**
  * @param {{ apiKey: string, baseUrl: string, model: string }} opts
  */
@@ -69,24 +85,34 @@ async function pingLlmSlot({ apiKey, baseUrl, model }) {
     }
 
     const endpoint = `${root}/chat/completions`;
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        // Omit temperature — Kimi Code models (e.g. kimi-for-coding) only allow 1.
-        max_tokens: 8,
-        messages: [{ role: "user", content: "Reply with exactly: pong" }],
-      }),
-      signal: ac.signal,
-    });
-    const text = await res.text();
+    const headers = {
+      "content-type": "application/json",
+      authorization: `Bearer ${apiKey}`,
+    };
+    // Omit temperature — Kimi Code models (e.g. kimi-for-coding) only allow 1.
+    const postChat = (useCompletionTokens) =>
+      fetch(endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model,
+          ...tokenLimitBody(model, useCompletionTokens),
+          messages: [{ role: "user", content: "Reply with exactly: pong" }],
+        }),
+        signal: ac.signal,
+      });
+
+    let useCompletionTokens = prefersMaxCompletionTokens(model);
+    let res = await postChat(useCompletionTokens);
+    let text = await res.text();
+    if (!res.ok && !useCompletionTokens && wantsMaxCompletionTokens(text)) {
+      useCompletionTokens = true;
+      res = await postChat(true);
+      text = await res.text();
+    }
     const ms = Date.now() - started;
     if (!res.ok) {
-      let detail = text.slice(0, 200);
+      let detail = text.slice(0, 400);
       try {
         const j = JSON.parse(text);
         detail = j?.error?.message || j?.message || detail;

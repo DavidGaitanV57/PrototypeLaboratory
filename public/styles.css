@@ -32,7 +32,8 @@
 .chat-log,
 .benchmark__history,
 .benchmark__stat--danger dd,
-.ping-model-list {
+.ping-model-list,
+.mech-list {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -46,7 +47,8 @@
 .chat-log::-webkit-scrollbar,
 .benchmark__history::-webkit-scrollbar,
 .benchmark__stat--danger dd::-webkit-scrollbar,
-.ping-model-list::-webkit-scrollbar {
+.ping-model-list::-webkit-scrollbar,
+.mech-list::-webkit-scrollbar {
   display: none;
   width: 0;
   height: 0;

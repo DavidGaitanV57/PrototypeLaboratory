@@ -57,6 +57,126 @@ function backoffMs(attempt) {
   return exp + jitter;
 }
 
+/** Newer OpenAI models cannot use function tools on chat/completions. */
+function modelNeedsResponsesApi(model) {
+  const id = String(model || "")
+    .toLowerCase()
+    .replace(/^openai\//, "");
+  return /^(gpt-5|gpt-6|o1|o3|o4)([\-./]|$)/.test(id);
+}
+
+function isOpenAiHost(url) {
+  try {
+    return /openai\.com$/i.test(new URL(url).hostname.replace(/^www\./, ""));
+  } catch {
+    return /openai\.com/i.test(String(url || ""));
+  }
+}
+
+function wantsResponsesApi(detail) {
+  const text = String(detail || "");
+  return /\/v1\/responses/i.test(text) || (/function tools/i.test(text) && /reasoning_effort/i.test(text));
+}
+
+function chatToolsToResponses(tools) {
+  return (tools || []).map((t) => ({
+    type: "function",
+    name: t.function?.name,
+    description: t.function?.description || "",
+    parameters: t.function?.parameters || { type: "object", properties: {} },
+  }));
+}
+
+function messagesToResponsesInput(messages) {
+  let instructions = "";
+  const input = [];
+  for (const m of messages || []) {
+    if (m.role === "system") {
+      const text = String(m.content || "").trim();
+      if (text) instructions = instructions ? `${instructions}\n\n${text}` : text;
+      continue;
+    }
+    if (m.role === "user") {
+      input.push({ role: "user", content: String(m.content || "") });
+      continue;
+    }
+    if (m.role === "assistant") {
+      if (m.content) input.push({ role: "assistant", content: String(m.content) });
+      for (const call of m.tool_calls || []) {
+        input.push({
+          type: "function_call",
+          call_id: call.id,
+          name: call.function?.name,
+          arguments: call.function?.arguments || "{}",
+        });
+      }
+      continue;
+    }
+    if (m.role === "tool") {
+      input.push({
+        type: "function_call_output",
+        call_id: m.tool_call_id,
+        output: String(m.content ?? ""),
+      });
+    }
+  }
+  return { instructions, input };
+}
+
+function pendingFunctionOutputs(messages) {
+  const outputs = [];
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i];
+    if (m.role !== "tool") break;
+    outputs.unshift({
+      type: "function_call_output",
+      call_id: m.tool_call_id,
+      output: String(m.content ?? ""),
+    });
+  }
+  return outputs;
+}
+
+function normalizeResponsesPayload(data) {
+  const output = Array.isArray(data?.output) ? data.output : [];
+  const texts = [];
+  const tool_calls = [];
+  for (const item of output) {
+    if (item?.type === "function_call") {
+      tool_calls.push({
+        id: item.call_id || item.id,
+        type: "function",
+        function: {
+          name: item.name,
+          arguments:
+            typeof item.arguments === "string" ? item.arguments : JSON.stringify(item.arguments || {}),
+        },
+      });
+    } else if (item?.type === "message") {
+      for (const part of item.content || []) {
+        if (typeof part?.text === "string" && part.text) texts.push(part.text);
+      }
+    } else if (item?.type === "output_text" && item.text) {
+      texts.push(item.text);
+    }
+  }
+  if (!texts.length && typeof data?.output_text === "string" && data.output_text) texts.push(data.output_text);
+  const content = texts.join("\n").trim();
+  return {
+    id: data?.id,
+    usage: data?.usage,
+    choices: [
+      {
+        message: {
+          role: "assistant",
+          content: content || null,
+          ...(tool_calls.length ? { tool_calls } : {}),
+        },
+      },
+    ],
+  };
+}
+
 function cloneMessages(messages) {
   return JSON.parse(JSON.stringify(messages || []));
 }
@@ -200,7 +320,12 @@ export function createLlmProvider({
       else signal?.addEventListener?.("abort", onParentAbort);
 
       const meter = createRunMeter();
-      const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+      const apiRoot = baseUrl.replace(/\/$/, "");
+      const chatEndpoint = `${apiRoot}/chat/completions`;
+      const responsesEndpoint = `${apiRoot}/responses`;
+      let useResponses = modelNeedsResponsesApi(model) && isOpenAiHost(apiRoot);
+      let lastResponseId = null;
+      let droppedResponseId = false;
       const resuming = Array.isArray(resumeMessages) && resumeMessages.length >= 2;
 
       const messages = resuming
@@ -255,8 +380,32 @@ export function createLlmProvider({
         onEvent?.({ type: "done", status: "cancelled", resumable: true });
       };
 
+      function responsesBody() {
+        const shared = {
+          model,
+          tools: chatToolsToResponses(tools),
+          reasoning: { effort: "low" },
+          store: true,
+        };
+        const outputs = lastResponseId ? pendingFunctionOutputs(messages) : [];
+        if (lastResponseId && outputs.length) {
+          return {
+            ...shared,
+            previous_response_id: lastResponseId,
+            input: outputs,
+          };
+        }
+        const { instructions, input } = messagesToResponsesInput(messages);
+        return {
+          ...shared,
+          ...(instructions ? { instructions } : {}),
+          input: input.length ? input : "",
+        };
+      }
+
       async function fetchCompletion(turnNo) {
         let attempt = 0;
+        let switchedToResponses = false;
         while (!aborted) {
           attempt += 1;
           const turnAc = new AbortController();
@@ -265,23 +414,50 @@ export function createLlmProvider({
           ac.signal.addEventListener("abort", onCancel);
 
           try {
-            const res = await fetch(endpoint, {
+            const res = await fetch(useResponses ? responsesEndpoint : chatEndpoint, {
               method: "POST",
               headers: {
                 Authorization: `Bearer ${apiKey}`,
                 "Content-Type": "application/json",
               },
-              body: JSON.stringify({
-                model,
-                messages,
-                tools,
-                tool_choice: "auto",
-              }),
+              body: JSON.stringify(
+                useResponses
+                  ? responsesBody()
+                  : {
+                      model,
+                      messages,
+                      tools,
+                      tool_choice: "auto",
+                    },
+              ),
               signal: turnAc.signal,
             });
 
             if (!res.ok) {
               const errText = await res.text();
+              if (!useResponses && !switchedToResponses && wantsResponsesApi(errText)) {
+                useResponses = true;
+                switchedToResponses = true;
+                onEvent?.({
+                  type: "status",
+                  message: "Model needs /v1/responses for tools — retrying…",
+                });
+                continue;
+              }
+              if (
+                useResponses &&
+                lastResponseId &&
+                !droppedResponseId &&
+                /previous_response_id/i.test(errText)
+              ) {
+                lastResponseId = null;
+                droppedResponseId = true;
+                onEvent?.({
+                  type: "status",
+                  message: "Stored response expired — retrying with full history…",
+                });
+                continue;
+              }
               const httpErr = new Error(`LLM HTTP ${res.status}: ${errText.slice(0, 400)}`);
               httpErr.status = res.status;
               if (isRetryableHttp(res.status) && !aborted) {
@@ -296,7 +472,11 @@ export function createLlmProvider({
               throw httpErr;
             }
 
-            return await res.json();
+            const data = await res.json();
+            if (!useResponses) return data;
+            const normalized = normalizeResponsesPayload(data);
+            if (normalized.id) lastResponseId = normalized.id;
+            return normalized;
           } catch (err) {
             if (aborted || ac.signal.aborted || isAbortError(err)) {
               throw Object.assign(new Error("Stopped"), { name: "AbortError" });
