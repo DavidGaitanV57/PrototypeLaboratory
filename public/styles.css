@@ -1,19 +1,29 @@
+/* Forge's palette.
+ *
+ * The lab is drawn entirely through these fifteen tokens, so wearing the workspace's clothes is a
+ * matter of remapping them rather than rewriting the sixteen hundred lines below. It opens inside
+ * Forge as a panel of the same project: two different greys and two different accents either side
+ * of a frame read as two products, which is what it stopped being.
+ *
+ * Greys, text and lines are Forge's `--bg-*`, `--text-*` and `--line-*`. Ember is its action
+ * colour, amber its gates, rose its errors, violet its human-input state — the same meanings they
+ * carry over there, so a green button never means one thing here and another one pixel away. */
 :root {
-  --ink: #0e1218;
-  --paper: #e8ecf1;
-  --panel: #141a22;
-  --panel-2: #1c2430;
-  --line: #2a3544;
-  --mute: #8b97a8;
-  --accent: #3d9b8f;
-  --accent-2: #d4a24e;
-  --danger: #c45c5c;
-  --sky-day: #87b8e0;
+  --ink: #0e0f12;
+  --paper: #f4f5f8;
+  --panel: #15171c;
+  --panel-2: #1c1f25;
+  --line: rgba(255, 255, 255, 0.1);
+  --mute: #7d8493;
+  --accent: #ff8a3d;
+  --accent-2: #f5c451;
+  --danger: #f472a8;
+  --sky-day: #8ab8d4;
   --sky-night: #1b2a48;
-  --font-display: "Syne", sans-serif;
-  --font-body: "IBM Plex Sans", sans-serif;
-  --font-mono: "IBM Plex Mono", monospace;
-  --r: 4px;
+  --font-display: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --r: 8px;
 }
 
 *,
@@ -65,8 +75,8 @@ body {
 
 body {
   background:
-    radial-gradient(1200px 600px at 10% -10%, #1e3a36 0%, transparent 55%),
-    radial-gradient(900px 500px at 100% 0%, #2a2418 0%, transparent 50%),
+    radial-gradient(1200px 600px at 10% -10%, rgba(255, 138, 61, 0.07) 0%, transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, rgba(167, 139, 250, 0.06) 0%, transparent 50%),
     var(--panel);
 }
 
@@ -167,7 +177,7 @@ body {
 }
 
 .benchmark__stat--danger dd {
-  color: #e07070;
+  color: var(--danger);
   font-size: 0.9rem;
   font-weight: 500;
   line-height: 1.35;
@@ -349,7 +359,7 @@ body {
 }
 
 .plan-review .sync-review__item input {
-  accent-color: #8b7cf6;
+  accent-color: #a78bfa;
 }
 
 .plan-review .sync-review__chip {
@@ -442,8 +452,8 @@ body {
   font-size: 1rem;
   line-height: 1;
   flex-shrink: 0;
-  background: #8b7cf6;
-  border-color: #8b7cf6;
+  background: var(--plan, #a78bfa);
+  border-color: #a78bfa;
 }
 
 .plan-review__compose-send:hover {
@@ -531,7 +541,8 @@ input[type="text"] {
 .btn--primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #061210;
+  /* La tinta de Forge sobre su color de acción: casi negro, con una pizca del propio ámbar. */
+  color: #1a0d04;
 }
 
 .btn--primary:hover {
@@ -961,7 +972,7 @@ input[type="text"] {
 
 .chat-drawer__resize:hover::after,
 .chat-drawer.is-resizing .chat-drawer__resize::after {
-  background: var(--accent-2, #3d9b8f);
+  background: var(--accent-2);
 }
 
 .chat-drawer.is-resizing {
@@ -978,7 +989,7 @@ body:has(.chat-drawer.is-resizing) {
 }
 
 .chat-drawer--ask {
-  --ask: #e0863a;
+  --ask: #ff8a3d;
   --ask-soft: rgba(224, 134, 58, 0.14);
   --ask-line: rgba(224, 134, 58, 0.45);
   background: rgba(38, 24, 16, 0.96);
@@ -1062,7 +1073,7 @@ body:has(.chat-drawer.is-resizing) {
 }
 
 .chat-drawer--plan {
-  --plan: #8b7cf6;
+  --plan: #a78bfa;
   --plan-soft: rgba(139, 124, 246, 0.14);
   --plan-line: rgba(139, 124, 246, 0.45);
   background: rgba(22, 20, 38, 0.96);
@@ -1217,7 +1228,7 @@ body:has(.chat-drawer.is-resizing) {
 }
 
 .chat-msg__mark--plan {
-  background: #8b7cf6;
+  background: var(--plan, #a78bfa);
 }
 
 .chat-msg__text {
@@ -1402,7 +1413,7 @@ body:has(.chat-drawer.is-resizing) {
   left: 0;
   width: min(280px, 78vw);
   background: #1a1f27;
-  border: 1px solid #2e3744;
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 10px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
   overflow: hidden;
@@ -1455,7 +1466,7 @@ body:has(.chat-drawer.is-resizing) {
   line-height: 1.4;
   color: var(--paper);
   background: #222933;
-  border-bottom: 1px solid #2e3744;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
 }
 
 .model-picker__body {
