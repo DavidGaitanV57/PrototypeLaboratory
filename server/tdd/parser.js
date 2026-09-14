@@ -48,7 +48,10 @@ export function parseProjectName(markdown) {
   const m =
     markdown.match(/project_name:\s*["']?([^"'\n]+)/i) ||
     markdown.match(/\|\s*\*\*Game title\*\*\s*\|\s*([^|]+)\|/i) ||
-    markdown.match(/project:\s*\r?\n\s*name:\s*["']?([^"'\n]+)/i);
+    markdown.match(/project:\s*\r?\n\s*name:\s*["']?([^"'\n]+)/i) ||
+    // Last resort: the document's own first heading. A TDD written by a tool that emits no front
+    // matter still says what it is on line one, and "Untitled" in the picker helps nobody.
+    markdown.match(/^#\s+(?!#)(.+?)\s*$/m);
   return (m?.[1] || "Untitled").trim();
 }
 
@@ -148,6 +151,24 @@ export async function readTdd(tddsRoot, slug) {
     projectName: parseProjectName(text),
     mechanics: parseMechanics(text),
   };
+}
+
+/**
+ * Write a TDD that arrives as text, under a slug the caller chooses.
+ *
+ * `importTddUpload` never replaces: it walks Name, Name1, Name2 until it finds a free directory,
+ * which is right for a person picking a file twice by accident. It is wrong for a tool that pushes
+ * the same project every time it opens the lab — that piles up a copy per visit. Here the caller
+ * owns the slug, so pushing again refreshes the document in place.
+ */
+export async function importTddText(tddsRoot, { slug, text }) {
+  const safe = assertSafeSlug(slug);
+  const body = String(text || "");
+  if (!body.trim()) throw new Error("Empty TDD");
+  const dir = path.join(tddsRoot, safe);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, "TDD.md"), body, "utf8");
+  return readTdd(tddsRoot, safe);
 }
 
 export async function importTddUpload(tddsRoot, filename, buffer) {

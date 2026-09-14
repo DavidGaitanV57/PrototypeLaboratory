@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
-import { listTdds, readTdd, importTddUpload } from "./tdd/parser.js";
+import { listTdds, readTdd, importTddUpload, importTddText } from "./tdd/parser.js";
 import { createSession } from "./agent/session.js";
 import { exportBuild } from "./export.js";
 import {
@@ -132,6 +132,49 @@ app.get("/api/tdds/:slug", async (req, res) => {
     });
   } catch (err) {
     res.status(404).json({ error: err.message });
+  }
+});
+
+// Push a TDD in from somewhere else, by URL or by text, under a slug the caller owns.
+//
+// This is how Forge hands the lab the document of a project: the person never picks a TDD, they
+// press a button in Forge and land here with that one already loaded. The slug is the caller's so
+// that opening the same project twice refreshes the document instead of leaving a second copy.
+// The same ceiling the JSON body parser already imposes, so both ways in behave alike. A TDD runs
+// to some hundred thousand characters; this leaves room to spare.
+const TOPE_TDD = 2 * 1024 * 1024;
+
+app.post("/api/tdds/push", async (req, res) => {
+  try {
+    const slug = parseSlug(req.body?.slug);
+    if (!slug) return res.status(400).json({ error: "slug required" });
+
+    let text = typeof req.body?.text === "string" ? req.body.text : null;
+    if (!text) {
+      const url = String(req.body?.url || "");
+      // Only https, and only a URL: this fetches from the server, so a caller must not be able to
+      // aim it at something on this machine's network.
+      if (!/^https:\/\//i.test(url)) return res.status(400).json({ error: "text or https url required" });
+      const upstream = await fetch(url, { redirect: "follow" });
+      if (!upstream.ok) return res.status(400).json({ error: `Could not fetch the TDD: HTTP ${upstream.status}` });
+      const size = Number(upstream.headers.get("content-length") || 0);
+      if (size > TOPE_TDD) return res.status(400).json({ error: `TDD too large: ${size} bytes` });
+      text = await upstream.text();
+      if (text.length > TOPE_TDD) return res.status(400).json({ error: "TDD too large" });
+    }
+
+    const tdd = await importTddText(TDDS, { slug, text });
+    res.json({
+      slug: tdd.slug,
+      projectName: tdd.projectName,
+      mechanics: tdd.mechanics.map((m) => ({ id: m.id, title: m.title, type: m.type })),
+      // What the lab could actually read out of it. A TDD with no mechanics parses fine and then
+      // has nothing to build from, so the caller is told rather than left to find out on an empty
+      // screen.
+      usable: tdd.mechanics.length > 0,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 

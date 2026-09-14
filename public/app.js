@@ -2735,7 +2735,10 @@ try {
   /* */
 }
 
-await loadTdds();
+// `?tdd=<slug>` opens straight on one document instead of whatever was picked last. It is how
+// Forge links here: it pushes the project's TDD first and then hands over a URL that already
+// names it, so nobody has to choose a TDD they did not put there.
+await loadTdds(new URLSearchParams(location.search).get("tdd") || undefined);
 await loadProviders();
 await loadBenchmark();
 await refreshContinueBtn();
