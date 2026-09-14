@@ -16,7 +16,7 @@ import {
 } from "./agent/providers/catalog.js";
 import { pingProviderModel, pingProviderModels } from "./agent/providers/ping.js";
 import { initBenchmarkStore, getBenchmarkState, clearBenchmark, recordBenchmark } from "./agent/benchmarkStore.js";
-import { assertSafeSlug } from "./security/paths.js";
+import { assertSafeSlug, isInsideDir } from "./security/paths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -492,6 +492,69 @@ app.delete("/api/benchmark", async (_req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message || String(err) });
   }
+});
+
+// ── Handing a finished build to whoever asked for it ────────────────────────
+//
+// `export` writes a playable build to this machine's `exports/`, which is where it stops being
+// useful: this disk does not survive a redeploy, and nobody else can read it. These two let the
+// tool that opened the lab collect the build and put it somewhere it can be played from.
+//
+// It is a file list plus one file at a time, and not an archive, on purpose: zipping would mean a
+// dependency this project does not have, and the other side has to walk the files anyway — a zip
+// in object storage is not a playable link.
+const EXPORTS = path.join(ROOT, "exports");
+
+async function listarArchivos(dir, base = dir) {
+  const out = [];
+  for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+    // Los que empiezan por punto quedan fuera. `.gitkeep` sólo existe para que git conserve una
+    // carpeta vacía, no aporta nada a una build publicada — y `sendFile` los rechaza de todos
+    // modos, así que listarlos sería prometer un archivo que después da 404.
+    if (entry.name.startsWith(".")) continue;
+    const abs = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...(await listarArchivos(abs, base)));
+    else if (entry.isFile()) {
+      const { size } = await fs.stat(abs);
+      out.push({ path: path.relative(base, abs).split(path.sep).join("/"), bytes: size });
+    }
+  }
+  return out;
+}
+
+app.post("/api/tdds/:slug/publish", async (req, res) => {
+  try {
+    const slug = parseSlug(req.params.slug);
+    if (!slug) return res.status(400).json({ error: "Invalid slug" });
+    const result = await exportBuild({ root: ROOT, publicRoot: PUBLIC, tddsRoot: TDDS, slug });
+    if (!result.ok) return res.status(400).json({ error: result.reason });
+
+    const nombre = path.basename(result.destination);
+    const files = await listarArchivos(result.destination);
+    res.json({
+      export: nombre,
+      files,
+      bytes: files.reduce((t, f) => t + f.bytes, 0),
+      entry: "index.html",
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.get("/api/exports/:name/*", async (req, res) => {
+  const nombre = parseSlug(req.params.name);
+  if (!nombre) return res.status(400).json({ error: "Invalid export" });
+  const rel = req.params[0] || "";
+  const abs = path.resolve(EXPORTS, nombre, rel);
+  // Never serve outside the exports folder, whatever the path says.
+  if (!isInsideDir(path.join(EXPORTS, nombre), abs)) return res.status(400).json({ error: "Invalid path" });
+  try {
+    await fs.access(abs);
+  } catch {
+    return res.status(404).json({ error: "Not found" });
+  }
+  res.sendFile(abs);
 });
 
 app.post("/api/tdds/:slug/export", async (req, res) => {
