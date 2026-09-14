@@ -46,11 +46,26 @@ const app = express();
 app.disable("x-powered-by");
 app.use(express.json({ limit: "2mb" }));
 
+// Who may put this lab inside a frame.
+//
+// It used to be nobody but itself, which is the right default for a tool you open directly. But
+// Forge opens it as a panel of its own workspace, and `X-Frame-Options` cannot name a list of
+// origins — so where a list is configured, the CSP form replaces it. Unset, nothing changes.
+//
+// Space-separated origins, e.g. FRAME_ANCESTORS="'self' http://localhost:3000 https://forge.example"
+const FRAME_ANCESTORS = String(process.env.FRAME_ANCESTORS || "").trim();
+
 app.use((_req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  if (FRAME_ANCESTORS) {
+    res.setHeader("Content-Security-Policy", `frame-ancestors ${FRAME_ANCESTORS}`);
+  } else {
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  }
   res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+  // `same-origin` refuses to be loaded by another site at all, which includes the frame Forge
+  // draws. Where framing is allowed on purpose, this has to loosen with it.
+  res.setHeader("Cross-Origin-Resource-Policy", FRAME_ANCESTORS ? "cross-origin" : "same-origin");
   next();
 });
 
