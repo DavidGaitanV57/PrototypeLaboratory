@@ -1674,3 +1674,10 @@ body:has(.chat-drawer.is-resizing) {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+
+/* The TDD arrived from outside (`?tdd=`), so there is nothing to pick: the dropdown and the
+   import button would only offer a way to quietly switch to another project's document. */
+body[data-tdd-fijo] #tddSelect,
+body[data-tdd-fijo] .file-btn {
+  display: none;
+}

@@ -2738,7 +2738,19 @@ try {
 // `?tdd=<slug>` opens straight on one document instead of whatever was picked last. It is how
 // Forge links here: it pushes the project's TDD first and then hands over a URL that already
 // names it, so nobody has to choose a TDD they did not put there.
-await loadTdds(new URLSearchParams(location.search).get("tdd") || undefined);
+const tddFijo = new URLSearchParams(location.search).get("tdd") || undefined;
+await loadTdds(tddFijo);
+
+// And when the document came in that way, the picker goes. Leaving a dropdown and an Import
+// button next to a TDD somebody else chose invites a change that would silently work on another
+// project's document. The mechanics stay — that is what tells you the TDD was read — and so does
+// Clean project, which is about the workspace and not about which TDD is loaded.
+if (tddFijo && [...tddSelect.options].some((o) => o.value === tddFijo)) {
+  document.body.dataset.tddFijo = "1";
+  const etiqueta = document.querySelector('label[for="tddSelect"]');
+  const elegido = tdds.find((t) => t.slug === tddFijo);
+  if (etiqueta && elegido) etiqueta.textContent = `TDD · ${elegido.projectName}`;
+}
 await loadProviders();
 await loadBenchmark();
 await refreshContinueBtn();
