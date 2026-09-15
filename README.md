@@ -21,7 +21,7 @@ Open http://127.0.0.1:3850
 
 | Id | Needs |
 |----|--------|
-| `cursor` | `CURSOR_API_KEY` — model selectable (`auto`, `composer-2.5`, …) |
+| `cursor` | `CURSOR_API_KEY` — model selectable (`auto`, `composer-2.5`, `grok-4.6`, …) |
 | `minimax` / `llm` | `LLM_API_KEY` + `LLM_BASE_URL` / `LLM_MODEL` (or `MINIMAX_*`) |
 | `openai`, `kimi`, … | Matching `*_API_KEY` |
 

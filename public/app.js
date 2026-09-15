@@ -1876,8 +1876,8 @@ async function refreshContinueBtn() {
   try {
     const st = await fetch("/api/gameplay/status").then((r) => r.json());
     continueBtn.hidden = !st.ready;
-    exportBtn.hidden = !st.ready;
-    exportPlayBtn.hidden = !st.ready;
+    exportBtn.hidden = true;
+    exportPlayBtn.hidden = true;
   } catch {
     continueBtn.hidden = true;
     exportBtn.hidden = true;

@@ -16,7 +16,21 @@ export const KNOWN_PROVIDERS = [
     keyVars: ["CURSOR_API_KEY"],
     modelVar: "CURSOR_MODEL",
     defaultModel: "auto",
-    suggestedModels: ["auto", "composer-2.5", "composer-2", "gpt-5.2", "claude-4.6-sonnet"],
+    suggestedModels: [
+      "auto",
+      "composer-2.5",
+      "grok-4.6",
+      "grok-4.5",
+      "claude-opus-5",
+      "claude-opus-4-8",
+      "claude-fable-5-1",
+      "claude-fable-5",
+      "gpt-5.6-sol",
+      "gpt-5.5",
+      "gemini-3.8-flash",
+      "gemini-3.7-flash",
+      "muse-spark-1.3",
+    ],
   },
   {
     id: "minimax",
@@ -37,8 +51,8 @@ export const KNOWN_PROVIDERS = [
     urlVar: "OPENAI_BASE_URL",
     defaultUrl: "https://api.openai.com/v1",
     modelVar: "OPENAI_MODEL",
-    defaultModel: "gpt-4.1",
-    suggestedModels: ["gpt-4.1", "gpt-4o", "gpt-4o-mini"],
+    defaultModel: "gpt-5.4",
+    suggestedModels: ["gpt-5.4", "gpt-5.5", "gpt-6-astra", "gpt-4.1", "gpt-4o"],
   },
   {
     id: "anthropic",
@@ -48,15 +62,13 @@ export const KNOWN_PROVIDERS = [
     urlVar: "ANTHROPIC_BASE_URL",
     defaultUrl: "https://api.anthropic.com/v1",
     modelVar: "ANTHROPIC_MODEL",
-    defaultModel: "claude-sonnet-4-6",
+    defaultModel: "claude-sonnet-5",
     suggestedModels: [
-      "claude-sonnet-4-6",
-      "claude-opus-4-6",
-      "claude-opus-4-7",
-      "claude-opus-4-8",
       "claude-sonnet-5",
       "claude-opus-5",
-      "claude-fable-5",
+      "claude-opus-4-8",
+      "claude-fable-5-1",
+      "claude-haiku-4-5",
     ],
   },
   {
@@ -79,8 +91,8 @@ export const KNOWN_PROVIDERS = [
     urlVar: "GLM_BASE_URL",
     defaultUrl: "https://open.bigmodel.cn/api/paas/v4",
     modelVar: "GLM_MODEL",
-    defaultModel: "glm-4.5",
-    suggestedModels: ["glm-4.5", "glm-4"],
+    defaultModel: "glm-5.2",
+    suggestedModels: ["glm-5.2", "glm-4.5", "glm-4"],
   },
   {
     id: "openrouter",
@@ -90,8 +102,13 @@ export const KNOWN_PROVIDERS = [
     urlVar: "OPENROUTER_BASE_URL",
     defaultUrl: "https://openrouter.ai/api/v1",
     modelVar: "OPENROUTER_MODEL",
-    defaultModel: "openai/gpt-4.1",
-    suggestedModels: ["openai/gpt-4.1", "anthropic/claude-sonnet-4"],
+    defaultModel: "openai/gpt-5.4",
+    suggestedModels: [
+      "openai/gpt-5.4",
+      "openai/gpt-5.5",
+      "anthropic/claude-sonnet-5",
+      "anthropic/claude-opus-5",
+    ],
   },
 ];
 
@@ -318,15 +335,21 @@ export function providerStatus(env = process.env) {
 }
 
 function mergeModelSuggestions(p, active) {
-  const set = new Set([...(p.suggestedModels || [])]);
-  if (p.model) set.add(p.model);
-  if (active?.id === p.id && active.model) set.add(active.model);
-  // Keep auto first for Cursor
-  const arr = [...set];
+  const ordered = [];
+  const seen = new Set();
+  const push = (m) => {
+    const id = String(m || "").trim();
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    ordered.push(id);
+  };
+  for (const m of p.suggestedModels || []) push(m);
+  push(p.model);
+  if (active?.id === p.id) push(active.model);
   if (p.id === "cursor") {
-    arr.sort((a, b) => (a === "auto" ? -1 : b === "auto" ? 1 : a.localeCompare(b)));
+    ordered.sort((a, b) => (a === "auto" ? -1 : b === "auto" ? 1 : 0));
   }
-  return arr;
+  return ordered;
 }
 
 /** @deprecated use setActiveProvider */
