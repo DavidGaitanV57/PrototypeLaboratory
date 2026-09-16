@@ -123,6 +123,53 @@ async function clearGameplay() {
   await fs.writeFile(path.join(GAMEPLAY, ".gitkeep"), "", "utf8");
 }
 
+// ── One workspace per project ────────────────────────────────────────────────
+//
+// The generated game always lives in public/gameplay: the agent's write policy allows that path
+// and nothing else, the prompts name it, the advisor scans it and the player imports from it. So
+// isolating projects by moving the game somewhere else would mean touching all of those, prompts
+// included.
+//
+// Instead the folder stays where everything expects it, and the lab parks the current one aside
+// when a different project opens. Opening project B saves A's build under workspaces/A and brings
+// B's back — nobody sees somebody else's prototype, and no prompt changes.
+//
+// This is sequential isolation: one project at a time, which is how the lab is used. Two people
+// working at once still share the machine.
+const WORKSPACES = path.join(ROOT, "workspaces");
+const ACTIVO = path.join(WORKSPACES, ".active");
+
+async function slugActivo() {
+  try { return (await fs.readFile(ACTIVO, "utf8")).trim() || null; } catch { return null; }
+}
+
+async function activarWorkspace(slug) {
+  const safe = assertSafeSlug(slug);
+  const actual = await slugActivo();
+  if (actual === safe) return { slug: safe, changed: false, previous: actual };
+
+  await fs.mkdir(WORKSPACES, { recursive: true });
+
+  // Park what is on the bench, if it belongs to someone.
+  if (actual) {
+    const destino = path.join(WORKSPACES, actual);
+    await fs.rm(destino, { recursive: true, force: true });
+    await fs.rename(GAMEPLAY, destino).catch(() => {});
+  } else {
+    await fs.rm(GAMEPLAY, { recursive: true, force: true });
+  }
+
+  // Bring this project's bench back, or start it empty.
+  const guardado = path.join(WORKSPACES, safe);
+  const existe = await fs.access(guardado).then(() => true).catch(() => false);
+  if (existe) await fs.rename(guardado, GAMEPLAY);
+  else await clearGameplay();
+  await fs.mkdir(GAMEPLAY, { recursive: true });
+
+  await fs.writeFile(ACTIVO, safe, "utf8");
+  return { slug: safe, changed: true, previous: actual };
+}
+
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, name: "prototype-laboratory", port: PORT });
 });
@@ -457,6 +504,23 @@ app.post("/api/sessions/:id/sync-tdd", async (req, res) => {
   }
 });
 
+// Switch the bench to a project. Called by whoever opens the lab for that project — Forge does it
+// right before pushing its TDD — so the build on screen always belongs to the project you opened.
+app.post("/api/workspace/activate", async (req, res) => {
+  try {
+    const r = await activarWorkspace(req.body?.slug);
+    if (r.changed) {
+      for (const s of sessions.values()) s.cancel?.();
+      sessions.clear();
+      broadcastReload("workspace");
+    }
+    const ready = await fs.access(path.join(GAMEPLAY, "main.js")).then(() => true).catch(() => false);
+    res.json({ ok: true, ...r, ready });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.post("/api/workspace/clean", async (_req, res) => {
   try {
     for (const s of sessions.values()) s.cancel?.();
@@ -472,11 +536,14 @@ app.post("/api/workspace/clean", async (_req, res) => {
 });
 
 app.get("/api/gameplay/status", async (_req, res) => {
+  // `project` says whose build is on the bench. Without it a caller cannot tell a missing build
+  // from somebody else's, which is the confusion this endpoint used to feed.
+  const project = await slugActivo();
   try {
     await fs.access(path.join(GAMEPLAY, "main.js"));
-    res.json({ ready: true, entry: "/gameplay/main.js" });
+    res.json({ ready: true, entry: "/gameplay/main.js", project });
   } catch {
-    res.json({ ready: false });
+    res.json({ ready: false, project });
   }
 });
 

@@ -5,6 +5,7 @@ node_modules/
 sessions/
 exports/*
 !exports/.gitkeep
+workspaces/
 public/gameplay/*
 !public/gameplay/.gitkeep
 *.log
