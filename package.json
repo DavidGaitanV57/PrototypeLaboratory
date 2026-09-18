@@ -7,8 +7,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "start": "node server/index.js",
-    "dev": "node --watch server/index.js",
+    "start": "node --use-system-ca server/index.js",
+    "dev": "node --use-system-ca --watch server/index.js",
     "seed": "node server/scripts/seed.js",
     "smoke": "node server/scripts/smoke.js && node server/scripts/smoke-export.js && node server/scripts/smoke-advisor.js && node server/scripts/smoke-chat-merge.js && node server/scripts/smoke-runtime-kits.js"
   },

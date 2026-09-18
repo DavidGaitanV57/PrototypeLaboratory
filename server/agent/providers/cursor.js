@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { Agent } from "@cursor/sdk";
 import { createRunMeter } from "../runMeter.js";
 
@@ -45,12 +48,75 @@ function absorbAssistantDelta(prev, next) {
   if (!a) return b;
   if (b.startsWith(a)) return b;
   if (a.startsWith(b)) return a;
-  // Growing snapshot rewrite (markdown / retokenize) — prefer newer when longer
   if (b.length >= a.length) return b;
-  // Short token delta
   if (b.length <= 32) return a + b;
-  // Shorter snapshot — keep the fuller text
   return a;
+}
+
+function errText(err) {
+  if (!err) return "";
+  if (typeof err === "string") return err;
+  const parts = [err.message, err.cause?.message, err.code, err.cause?.code]
+    .filter(Boolean)
+    .map(String);
+  return parts.join(" · ") || String(err);
+}
+
+/** Known flaky Cursor cloud handshake (forum: transient TCP/TLS/DNS after idle). */
+function isCursorKeyExchangeError(err) {
+  const t = errText(err);
+  if (isTlsCertError(err)) return false;
+  return /key exchange|exchange endpoint|ECONNRESET|ETIMEDOUT|ENOTFOUND|other side closed|UND_ERR/i.test(
+    t,
+  ) || (/fetch failed/i.test(t) && !/certificate|CERT_|SSL|TLS/i.test(t));
+}
+
+function isTlsCertError(err) {
+  const t = errText(err);
+  return /self[- ]signed certificate|certificate in certificate chain|UNABLE_TO_VERIFY_LEAF|CERT_HAS_EXPIRED|unable to verify the first certificate/i.test(
+    t,
+  );
+}
+
+function friendlyCursorError(err) {
+  const raw = errText(err);
+  if (isTlsCertError(err)) {
+    return (
+      `Cursor TLS error (${raw.slice(0, 120)}). The lab now starts with --use-system-ca; restart via npm start. ` +
+      `If it persists: set NODE_EXTRA_CA_CERTS to your corporate root CA .pem before starting, or switch chat provider to OpenAI/Kimi for Agent edits.`
+    );
+  }
+  if (isCursorKeyExchangeError(err)) {
+    return (
+      `Cursor could not reach its API key exchange endpoint (${raw.slice(0, 160)}). ` +
+      `Retry Agent, check VPN/firewall/DNS, or switch chat provider to OpenAI/Kimi for edits.`
+    );
+  }
+  return raw || "Cursor request failed";
+}
+
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(Object.assign(new Error("Aborted"), { name: "AbortError" }));
+      return;
+    }
+    const t = setTimeout(resolve, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(Object.assign(new Error("Aborted"), { name: "AbortError" }));
+    };
+    signal?.addEventListener?.("abort", onAbort, { once: true });
+  });
+}
+
+async function disposeAgent(agent) {
+  if (!agent) return;
+  try {
+    await agent[Symbol.asyncDispose]?.();
+  } catch {
+    /* */
+  }
 }
 
 /**
@@ -76,7 +142,7 @@ export function createCursorProvider({ root, apiKey, model, writeMode = "generat
       return null;
     },
     model: modelId,
-    async run(prompt, { onEvent, signal } = {}) {
+    async run(prompt, { onEvent, signal, images } = {}) {
       aborted = false;
       const meter = createRunMeter();
       const onAbort = () => {
@@ -98,21 +164,71 @@ export function createCursorProvider({ root, apiKey, model, writeMode = "generat
         );
       };
 
+      let imageNote = "";
+      const attachList = Array.isArray(images) ? images.slice(0, 3) : [];
+      if (attachList.length) {
+        const saved = [];
+        try {
+          for (let i = 0; i < attachList.length; i += 1) {
+            const img = attachList[i];
+            if (img.relPath) {
+              saved.push(String(img.relPath).replace(/\\/g, "/"));
+              continue;
+            }
+            const dir = path.join(root, "sessions", "chat-attach", randomUUID());
+            await fs.mkdir(dir, { recursive: true });
+            const ext =
+              /jpeg|jpg/i.test(img.mimeType || "")
+                ? "jpg"
+                : /webp/i.test(img.mimeType || "")
+                  ? "webp"
+                  : /gif/i.test(img.mimeType || "")
+                    ? "gif"
+                    : "png";
+            const rel = path
+              .join("sessions", "chat-attach", path.basename(dir), `shot-${i + 1}.${ext}`)
+              .replace(/\\/g, "/");
+            await fs.writeFile(
+              path.join(dir, `shot-${i + 1}.${ext}`),
+              Buffer.from(img.data, "base64"),
+            );
+            saved.push(rel);
+          }
+          imageNote = [
+            "",
+            "## User-attached screenshot(s)",
+            "The operator attached gameplay screenshot(s) as visual evidence.",
+            ...saved.map((p) => `- Image file on disk: ${p}`),
+            "Open/read these image files if your tools support viewing images.",
+            "If you cannot decode the image bytes, say so clearly and answer from the user's text + typical playable layout — do not invent UI details.",
+            "",
+          ].join("\n");
+        } catch (err) {
+          imageNote = `\n(Could not persist screenshots: ${err?.message || err})\n`;
+        }
+      }
+
       const fullPrompt = planMode
         ? [
-            "PLAN MODE (read-only). Do NOT edit files. Return only the JSON plan object. No code samples.",
+            "PLAN MODE (read-only).",
+            "Only inspect the codebase and answer with a short implementation plan as JSON.",
+            "Do not edit files. No code samples.",
             "",
             prompt,
+            imageNote,
           ].join("\n")
         : askMode
           ? [
-              "ASK MODE (read-only). Do NOT edit, create, delete, or patch any files.",
+              "ASK MODE (read-only).",
               "Only inspect the codebase and answer with diagnosis + a concrete fix plan.",
               "If you would normally write code, describe the edits instead.",
               "",
               prompt,
+              imageNote,
             ].join("\n")
-          : prompt;
+          : `${prompt}${imageNote}`;
+
+      const maxAttempts = 3;
 
       try {
         onEvent?.({
@@ -123,75 +239,147 @@ export function createCursorProvider({ root, apiKey, model, writeMode = "generat
               ? `Cursor · model ${modelId} · ASK (read-only request)`
               : `Cursor · model ${modelId}`,
         });
-        agent = await Agent.create({
-          apiKey: key,
-          model: { id: modelId },
-          local: { cwd: root },
-        });
 
-        const run = await agent.send(fullPrompt);
-        /** @type {string[]} */
-        const replyParts = [];
-        let live = "";
-        let lastStatusAt = 0;
-        const flushLive = () => {
-          const t = live.trim();
-          if (t) replyParts.push(t);
-          live = "";
-        };
-        for await (const event of run.stream()) {
-          if (aborted) {
-            try {
-              await run.cancel?.();
-            } catch {
-              /* */
-            }
-            break;
+        let lastErr = null;
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+          if (aborted || signal?.aborted) {
+            throw Object.assign(new Error("Stopped"), { name: "AbortError" });
           }
-          if (event.type === "assistant") {
-            meter.noteTurn(event.usage || event.message?.usage);
-            for (const block of event.message?.content || []) {
-              if (block.type !== "text" || !block.text) continue;
-              live = absorbAssistantDelta(live, block.text);
-              // Status only while streaming — do NOT emit every snapshot as assistant
-              // (the chat UI would concatenate them into gibberish).
-              const now = Date.now();
-              if (now - lastStatusAt > 400) {
-                lastStatusAt = now;
-                const snip = live.replace(/\s+/g, " ").trim().slice(-120);
-                if (snip.length >= 8) onEvent?.({ type: "status", message: snip });
+          await disposeAgent(agent);
+          agent = null;
+          try {
+            agent = await Agent.create({
+              apiKey: key,
+              model: { id: modelId },
+              local: { cwd: root },
+            });
+            const run = await agent.send(fullPrompt);
+            /** @type {string[]} */
+            const replyParts = [];
+            let live = "";
+            let lastStatusAt = 0;
+            const flushLive = () => {
+              const t = live.trim();
+              if (t) replyParts.push(t);
+              live = "";
+            };
+            for await (const event of run.stream()) {
+              if (aborted) {
+                try {
+                  await run.cancel?.();
+                } catch {
+                  /* */
+                }
+                break;
+              }
+              if (event.type === "assistant") {
+                meter.noteTurn(event.usage || event.message?.usage);
+                for (const block of event.message?.content || []) {
+                  if (block.type !== "text" || !block.text) continue;
+                  live = absorbAssistantDelta(live, block.text);
+                  const now = Date.now();
+                  if (now - lastStatusAt > 400) {
+                    lastStatusAt = now;
+                    const snip = live.replace(/\s+/g, " ").trim().slice(-120);
+                    if (snip.length >= 8) onEvent?.({ type: "status", message: snip });
+                  }
+                }
+              } else if (
+                event.type === "tool_call" ||
+                event.type === "tool_call_started" ||
+                event.type === "tool_call_completed"
+              ) {
+                flushLive();
+                meter.noteTool();
+                const name =
+                  event.name ||
+                  event.toolCall?.name ||
+                  event.tool_call?.name ||
+                  event.tool?.name ||
+                  "";
+                const relPath = toolPathFromEvent(event);
+                const writeLike =
+                  /write|edit|apply|patch|search_replace|str_replace|create_file|delete_file/i.test(
+                    name,
+                  ) ||
+                  (/gameplay\//i.test(relPath) &&
+                    /\.(js|ts|json|css|html|md)$/i.test(relPath));
+                if (writeLike) {
+                  meter.noteFile();
+                  if (relPath) onEvent?.({ type: "file", path: relPath });
+                  else onEvent?.({ type: "file", path: "public/gameplay/" });
+                }
+                onEvent?.({
+                  type: "tool",
+                  name: name || "tool",
+                  path: relPath || undefined,
+                  status: "call",
+                });
               }
             }
-          } else if (event.type === "tool_call") {
             flushLive();
-            meter.noteTool();
-            const name = event.name || event.toolCall?.name || "tool";
-            const relPath = toolPathFromEvent(event);
-            if (/write|edit|apply|patch/i.test(name) || /\.(js|ts|css|html|md)$/i.test(relPath)) {
-              meter.noteFile();
-              if (relPath) onEvent?.({ type: "file", path: relPath });
+            const finalText = replyParts.join("\n\n").trim();
+            if (finalText) onEvent?.({ type: "assistant", text: finalText });
+            const result = await run.wait();
+            const status = aborted ? "cancelled" : result?.status || "finished";
+            if (!aborted && /error|fail/i.test(String(status))) {
+              const detail =
+                result?.error?.message ||
+                result?.error ||
+                result?.message ||
+                `Cursor run status: ${status}`;
+              const detailErr = new Error(String(detail));
+              if (isCursorKeyExchangeError(detailErr) && attempt < maxAttempts) {
+                lastErr = detailErr;
+                onEvent?.({
+                  type: "status",
+                  message: `Cursor cloud handshake failed — retry ${attempt}/${maxAttempts - 1}…`,
+                });
+                await sleep(800 * attempt, signal);
+                continue;
+              }
+              onEvent?.({ type: "error", message: String(detail).slice(0, 800) });
+            } else if (!aborted && !finalText && attachList.length) {
+              onEvent?.({
+                type: "assistant",
+                text:
+                  "No readable reply came back for this screenshot turn. Cursor SDK cannot attach images multimodally like ChatGPT vision — switch provider to OpenAI/Anthropic (vision model) for image Ask, or describe the bug in text.",
+              });
             }
-            onEvent?.({ type: "tool", name, path: relPath || undefined, status: "call" });
+            emitBenchmark(status, usageFromResult(result));
+            onEvent?.({ type: "done", status });
+            return result;
+          } catch (err) {
+            lastErr = err;
+            if (aborted || signal?.aborted || err?.name === "AbortError") {
+              throw Object.assign(new Error("Stopped"), { name: "AbortError" });
+            }
+            if (isCursorKeyExchangeError(err) && attempt < maxAttempts) {
+              onEvent?.({
+                type: "status",
+                message: `Cursor cloud handshake failed — retry ${attempt}/${maxAttempts - 1}…`,
+              });
+              await sleep(800 * attempt, signal);
+              continue;
+            }
+            throw err;
           }
         }
-        flushLive();
-        const finalText = replyParts.join("\n\n").trim();
-        if (finalText) onEvent?.({ type: "assistant", text: finalText });
-        const result = await run.wait();
-        const status = aborted ? "cancelled" : result?.status || "finished";
-        emitBenchmark(status, usageFromResult(result));
-        onEvent?.({ type: "done", status });
-        return result;
+        throw lastErr || new Error("Cursor request failed");
       } catch (err) {
-        emitBenchmark("error", null, err?.message || err);
-        throw err;
+        if (err?.name === "AbortError") {
+          emitBenchmark("cancelled");
+          onEvent?.({ type: "done", status: "cancelled" });
+          return { status: "cancelled" };
+        }
+        const raw = errText(err);
+        const msg = friendlyCursorError(err);
+        onEvent?.({ type: "error", message: msg.slice(0, 800) });
+        emitBenchmark("error", null, msg);
+        throw new Error(msg);
       } finally {
         signal?.removeEventListener?.("abort", onAbort);
-        try {
-          await agent?.[Symbol.asyncDispose]?.();
-        } catch {
-          /* */
-        }
+        await disposeAgent(agent);
         agent = null;
       }
     },
