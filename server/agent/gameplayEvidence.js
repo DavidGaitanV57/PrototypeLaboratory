@@ -29,6 +29,90 @@ export async function listGameplayFiles(root) {
 }
 
 /**
+ * Fingerprint of public/gameplay/** so chat can detect disk writes across any provider.
+ * @param {string} root
+ * @returns {Promise<{ ready: boolean, fingerprint: string, files: { path: string, mtimeMs: number, size: number }[] }>}
+ */
+export async function gameplayFingerprint(root) {
+  const gameplayDir = path.join(root, "public", "gameplay");
+  const files = [];
+  async function walk(dir, prefix = "public/gameplay") {
+    let entries = [];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      if (ent.name.startsWith(".")) continue;
+      const rel = `${prefix}/${ent.name}`;
+      const abs = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        await walk(abs, rel);
+        continue;
+      }
+      if (!ent.isFile() || !/\.(js|json|yaml|yml|md)$/i.test(ent.name)) continue;
+      try {
+        const st = await fs.stat(abs);
+        files.push({ path: rel, mtimeMs: Math.round(st.mtimeMs), size: st.size });
+      } catch {
+        /* skip */
+      }
+    }
+  }
+  await walk(gameplayDir);
+  files.sort((a, b) => a.path.localeCompare(b.path));
+  const fingerprint = files.map((f) => `${f.path}:${f.mtimeMs}:${f.size}`).join("|");
+  const ready = files.some((f) => f.path.endsWith("/main.js") || f.path === "public/gameplay/main.js");
+  return { ready, fingerprint, files };
+}
+
+/**
+ * Compact under-the-hood map for Chat — scopes reads/writes without user input.
+ * @param {string} root
+ * @returns {Promise<string>}
+ */
+export async function buildGameplayChatContext(root) {
+  const files = await listGameplayFiles(root);
+  if (!files.length) {
+    return [
+      "## Playable scope (lab-injected — do not ask the user)",
+      "- No files under `public/gameplay/` yet.",
+      "- Start at `public/gameplay/main.js` with `mount` / `unmount`.",
+      "- Do **not** scan `server/`, `public/app.js`, `public/runtime/**`, or lab chrome unless the user explicitly asked about them.",
+    ].join("\n");
+  }
+
+  let mainSrc = "";
+  try {
+    mainSrc = await fs.readFile(path.join(root, "public", "gameplay", "main.js"), "utf8");
+  } catch {
+    /* optional */
+  }
+  const imports = [];
+  const importRe =
+    /import\s+(?:[^'";]+?\s+from\s+)?['"](\.?\.?\/[^'"]+|\/runtime\/[^'"]+)['"]/g;
+  let m;
+  while ((m = importRe.exec(mainSrc))) {
+    imports.push(m[1]);
+  }
+
+  const lines = [
+    "## Playable scope (lab-injected — do not ask the user)",
+    "- Edit/read **only** `public/gameplay/**` (and the active TDD if needed for numbers/rules).",
+    "- Do **not** explore or modify `server/`, `public/index.html`, `public/app.js`, `public/styles.css`, or rewrite `public/runtime/**`.",
+    "- Start at `public/gameplay/main.js`, then open only modules that import chain or clearly match the request.",
+    "",
+    "### Files on disk",
+    ...files.map((f) => `- ${f}`),
+  ];
+  if (imports.length) {
+    lines.push("", "### main.js imports", ...imports.map((i) => `- ${i}`));
+  }
+  return lines.join("\n");
+}
+
+/**
  * @param {{ role: string, message: string }[]} history
  * @param {string} [clientDigest]
  * @param {number} [limit]

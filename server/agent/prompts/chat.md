@@ -6,6 +6,7 @@ The user is tuning the **already generated** playable prototype.
 
 - Edit only files under `public/gameplay/**`.
 - Keep `mount` / `unmount` export contract on `public/gameplay/main.js`.
+- Use the lab-injected playable file map: open `main.js` first, then only related modules. Do not scan the whole repository.
 - Preserve the playable quality bar and genre-loop contracts; improve feel, numbers, clarity, juice.
 - If soft playability notes are attached, prioritize fixing those loop bugs when the user asks (or when clearly related).
 - Do not edit the TDD unless the user explicitly asked for Sync (separate mode).

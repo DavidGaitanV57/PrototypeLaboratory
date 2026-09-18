@@ -99,11 +99,17 @@ export function buildChatPrompt({
   pack,
   tddText = "",
   adviceDigest = "",
+  gameplayContext = "",
   mode = "agent",
+  /** Cursor SDK already has cwd tools — keep prompts short to avoid key-exchange / transport failures. */
+  runtime = "llm",
 }) {
   const ask = mode === "ask";
   const plan = mode === "plan";
   const lang = replyLanguageDirective(message);
+  const scopeBlock = gameplayContext
+    ? `\n${gameplayContext}\n`
+    : "\n## Playable scope\nStay in `public/gameplay/**`. Do not scan the rest of the lab.\n";
 
   if (ask || plan) {
     const chatRules = plan ? pack.chatPlan : pack.chatAsk;
@@ -114,6 +120,7 @@ export function buildChatPrompt({
         ? `## Mode: PLAN (read-only)\nDo not write files. End with the JSON plan object only (no code). TDD slug: ${slug}.`
         : `## Mode: ASK (read-only)\nDo not write or modify any files. TDD slug: ${slug}.\nRead gameplay/TDD only as needed to answer. Match reply length to the question.`,
       lang,
+      scopeBlock,
       adviceDigest
         ? `\n## Soft playability notes (only if relevant)\n${adviceDigest}\n`
         : "",
@@ -123,23 +130,38 @@ export function buildChatPrompt({
       .join("\n");
   }
 
-  const genreBrief = tddText ? buildGenreBrief(tddText) : "";
+  // Cursor local agent can read the repo itself — do not paste AGENTS.md + genre packs
+  // (multi‑100KB prompts correlate with SDK "API key exchange endpoint: fetch failed").
+  if (runtime === "cursor") {
+    return [
+      "## Mode: AGENT (edit gameplay via Cursor)",
+      `TDD slug: ${slug}. Prefer reading docs/tdds/${slug}/TDD.md and public/gameplay/** yourself.`,
+      "Write only under public/gameplay/**. Do not edit public/runtime/**, public/app.js, server/**, or AGENTS.md.",
+      "Keep mount/unmount, HudKit/JuiceKit, full loop (win/lose/restart), graybox primitives.",
+      "Match the user language. Keep the reply short after edits.",
+      lang,
+      scopeBlock,
+      adviceDigest
+        ? `\n## Soft playability notes (fix if relevant)\n${adviceDigest}\n`
+        : "",
+      `User request:\n${message}`,
+    ]
+      .filter((s) => s !== "")
+      .join("\n");
+  }
+
+  // Chat Agent must stay light — Ask works for "Hi" because it is small; the old Agent
+  // path pasted AGENTS.md + quality + genre packs on every turn and blew up provider fetch.
   return [
-    agentsMd,
-    "",
-    pack.quality,
-    "",
-    pack.verticalSlice,
-    "",
-    pack.genreLoop,
-    "",
-    genreBrief,
-    "",
     pack.chat,
     "",
-    `## Mode: AGENT (edit gameplay)`,
-    `TDD slug: ${slug} (TDD file is read-only this turn)`,
+    "## Mode: AGENT (edit gameplay)",
+    `TDD slug: ${slug} (TDD file is read-only this turn).`,
+    "Write only `public/gameplay/**`. Keep mount/unmount, HudKit, JuiceKit, full loop, graybox.",
+    "Do not edit `public/runtime/**`, lab UI, `server/**`, or `AGENTS.md`.",
+    "If you need TDD numbers/rules, read `docs/tdds/<slug>/TDD.md` with tools — do not wait for a pasted dump.",
     lang,
+    scopeBlock,
     adviceDigest
       ? `\n## Soft playability notes from last check (fix if the user is addressing them)\n${adviceDigest}\n`
       : "",

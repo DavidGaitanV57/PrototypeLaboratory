@@ -52,7 +52,9 @@ Fail: lone cube on empty plane; static HUD; HUD listing filenames; no juice on e
 
 ## Chat iteration
 
-Tune feel/numbers/juice/HUD. If soft playability hints mention laps/finish/restart/hud.js, fix those first when relevant.  
+Tune feel/numbers/juice/HUD. The lab injects a gameplay file map under the hood — start at `main.js`, do not scan the whole repo.  
+After Agent writes, the lab hard-reloads the playable so sibling modules apply.  
+If soft playability hints mention laps/finish/restart/hud.js, fix those first when relevant.  
 End with a short summary of what changed and how to verify in play.
 
 ## Soft checks

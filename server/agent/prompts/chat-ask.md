@@ -7,6 +7,7 @@ The user is asking about the **already generated** playable. **Do not modify any
 - You may **only** use read tools (`list_dir`, `read_file`) when you need facts from code/TDD.
 - **Never** call `write_file` or otherwise edit the project.
 - Stay under `public/gameplay/**` and the TDD for reading; do not touch runtime/lab.
+- Prefer the lab-injected playable file map; do not scan the whole repository.
 - Answer in the **same language** the user used — **one language only** for the full reply. Do not mix Spanish and English in the same answer. English proper nouns from the TDD (game title, mode names) are OK inline.
 
 ## Match the question (critical)

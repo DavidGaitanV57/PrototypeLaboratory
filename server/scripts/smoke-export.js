@@ -3,7 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { exportBuild } from "../export.js";
-import { listGameplayFiles, mergeChatDigest, parseChatPlan, parseSyncProposal } from "../agent/gameplayEvidence.js";
+import {
+  buildGameplayChatContext,
+  gameplayFingerprint,
+  listGameplayFiles,
+  mergeChatDigest,
+  parseChatPlan,
+  parseSyncProposal,
+} from "../agent/gameplayEvidence.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const errors = [];
@@ -43,6 +50,13 @@ else fail("parseChatPlan did not extract steps");
 const files = await listGameplayFiles(ROOT);
 if (files.some((f) => f.endsWith("main.js"))) ok(`listGameplayFiles (${files.length} files)`);
 else fail("listGameplayFiles missing main.js");
+
+const ctx = await buildGameplayChatContext(ROOT);
+if (/Playable scope/i.test(ctx) && /public\/gameplay\//i.test(ctx)) ok("buildGameplayChatContext");
+else fail("buildGameplayChatContext missing scope map");
+const fp = await gameplayFingerprint(ROOT);
+if (fp.ready && fp.fingerprint) ok("gameplayFingerprint");
+else fail("gameplayFingerprint not ready");
 
 const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "plab-export-"));
 const publicRoot = path.join(tmp, "public");

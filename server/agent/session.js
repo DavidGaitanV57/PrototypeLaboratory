@@ -16,6 +16,8 @@ import { readTdd } from "../tdd/parser.js";
 import { finalizeTddSync } from "../tdd/sync.js";
 import {
   formatSelectedSyncItems,
+  buildGameplayChatContext,
+  gameplayFingerprint,
   listGameplayFiles,
   mergeChatDigest,
   parseChatPlan,
@@ -173,8 +175,8 @@ export async function createSession({ root, tddsRoot, slug }) {
     };
   }
 
-  async function runProvider(prompt, { writeMode, op, mode, onEvent, resume } = {}) {
-    const picked = await pickProvider(root, { writeMode, slug });
+  async function runProvider(prompt, { writeMode, op, mode, onEvent, resume, images, picked: prePicked } = {}) {
+    const picked = prePicked || (await pickProvider(root, { writeMode, slug }));
     activeProvider = picked.provider;
     handlersStatus(picked, mode, op, onEvent, resume);
     const wrapped = wrapEvents({
@@ -195,6 +197,7 @@ export async function createSession({ root, tddsRoot, slug }) {
     return picked.provider.run(prompt, {
       onEvent: wrapped,
       signal: controller.signal,
+      images: Array.isArray(images) ? images : [],
     });
   }
 
@@ -290,6 +293,7 @@ export async function createSession({ root, tddsRoot, slug }) {
       const mode =
         handlers.mode === "ask" ? "ask" : handlers.mode === "plan" ? "plan" : "agent";
       const readOnly = mode === "ask" || mode === "plan";
+      const images = Array.isArray(handlers.images) ? handlers.images : [];
       runMeta = { mode, op: readOnly ? mode : "chat" };
       if (trimmed) {
         chatHistory.push({
@@ -297,6 +301,7 @@ export async function createSession({ root, tddsRoot, slug }) {
           message: trimmed,
           mode,
           at: Date.now(),
+          images: images.length,
         });
       }
       try {
@@ -306,7 +311,15 @@ export async function createSession({ root, tddsRoot, slug }) {
         } catch {
           /* optional */
         }
+        const beforeFp = readOnly ? null : await gameplayFingerprint(root);
+        let gameplayContext = "";
+        try {
+          gameplayContext = await buildGameplayChatContext(root);
+        } catch {
+          /* optional */
+        }
         const writeMode = readOnly ? mode : "chat";
+        const picked = await pickProvider(root, { writeMode, slug });
         const prompt = buildChatPrompt({
           slug,
           message: trimmed,
@@ -314,7 +327,9 @@ export async function createSession({ root, tddsRoot, slug }) {
           pack,
           tddText,
           adviceDigest: lastAdviceDigest,
+          gameplayContext,
           mode,
+          runtime: picked.kind === "cursor" ? "cursor" : "llm",
         });
         const assistantChunks = [];
         const onEvent = (ev) => {
@@ -328,13 +343,27 @@ export async function createSession({ root, tddsRoot, slug }) {
           op: readOnly ? mode : "chat",
           mode,
           onEvent,
+          images,
+          picked,
         });
         if (result?.status === "cancelled" || result?.resumable) {
           captureCheckpoint(runMeta);
           return { result, mode, resumable: true };
         }
         checkpoint = null;
+        let gameplayChanged = false;
         if (!readOnly) {
+          const afterFp = await gameplayFingerprint(root);
+          gameplayChanged = Boolean(
+            beforeFp && afterFp && beforeFp.fingerprint !== afterFp.fingerprint,
+          );
+          if (gameplayChanged) {
+            handlers.onEvent?.({
+              type: "gameplay-changed",
+              fingerprint: afterFp.fingerprint,
+              files: afterFp.files.map((f) => f.path),
+            });
+          }
           const report = await emitSoftAdvice({
             root,
             tddsRoot,
@@ -349,7 +378,7 @@ export async function createSession({ root, tddsRoot, slug }) {
           plan = parseChatPlan(assistantChunks.join("\n\n"));
           handlers.onEvent?.({ type: "plan-proposal", ...plan });
         }
-        return { result, mode, plan };
+        return { result, mode, plan, gameplayChanged };
       } catch (err) {
         captureCheckpoint(runMeta);
         throw err;
@@ -379,8 +408,11 @@ export async function createSession({ root, tddsRoot, slug }) {
           }
           handlers.onEvent?.(ev);
         };
+        const writeMode = cp.writeMode || "chat";
+        const readOnly = writeMode === "ask" || writeMode === "plan" || cp.mode === "ask" || cp.mode === "plan";
+        const beforeFp = readOnly ? null : await gameplayFingerprint(root);
         const result = await runProvider("", {
-          writeMode: cp.writeMode || "chat",
+          writeMode,
           op: cp.op,
           mode: cp.mode,
           onEvent,
@@ -392,7 +424,19 @@ export async function createSession({ root, tddsRoot, slug }) {
         }
         checkpoint = null;
         activeProvider?.clearCheckpoint?.();
-        if (cp.mode !== "ask" && cp.mode !== "plan" && cp.op !== "ask" && cp.op !== "plan") {
+        let gameplayChanged = false;
+        if (!readOnly) {
+          const afterFp = await gameplayFingerprint(root);
+          gameplayChanged = Boolean(
+            beforeFp && afterFp && beforeFp.fingerprint !== afterFp.fingerprint,
+          );
+          if (gameplayChanged) {
+            handlers.onEvent?.({
+              type: "gameplay-changed",
+              fingerprint: afterFp.fingerprint,
+              files: afterFp.files.map((f) => f.path),
+            });
+          }
           const report = await emitSoftAdvice({
             root,
             tddsRoot,
@@ -407,7 +451,7 @@ export async function createSession({ root, tddsRoot, slug }) {
           plan = parseChatPlan(assistantChunks.join("\n\n"));
           handlers.onEvent?.({ type: "plan-proposal", ...plan });
         }
-        return { result, mode: cp.mode, continued: true, plan };
+        return { result, mode: cp.mode, continued: true, plan, gameplayChanged };
       } catch (err) {
         captureCheckpoint(runMeta);
         throw err;
