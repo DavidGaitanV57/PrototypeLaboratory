@@ -3,6 +3,8 @@ import express from "express";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
 import { listTdds, readTdd, importTddUpload, importTddText } from "./tdd/parser.js";
@@ -20,6 +22,8 @@ import { gameplayFingerprint } from "./agent/gameplayEvidence.js";
 import { assertSafeSlug, isInsideDir } from "./security/paths.js";
 import { purgeChatAttachments, pruneSessionAttachDir } from "./chatAttachCleanup.js";
 
+const execFileAsync = promisify(execFile);
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const PUBLIC = path.join(ROOT, "public");
@@ -28,6 +32,24 @@ const SESSIONS = path.join(ROOT, "sessions");
 const GAMEPLAY = path.join(PUBLIC, "gameplay");
 const PORT = Number(process.env.PORT || 3850);
 const HOST = process.env.HOST || "127.0.0.1";
+
+/** Short git SHA for the Start screen version label (best-effort). */
+async function resolveLabVersion() {
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], {
+      cwd: ROOT,
+      windowsHide: true,
+      timeout: 4000,
+    });
+    const full = String(stdout || "").trim();
+    if (!/^[0-9a-f]{7,40}$/i.test(full)) return { version: "dev", commit: "", commitFull: "" };
+    return { version: full.slice(0, 7), commit: full.slice(0, 7), commitFull: full };
+  } catch {
+    return { version: "dev", commit: "", commitFull: "" };
+  }
+}
+
+const labVersion = await resolveLabVersion();
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -252,7 +274,14 @@ async function activarWorkspace(slug) {
 }
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, name: "prototype-laboratory", port: PORT });
+  res.json({
+    ok: true,
+    name: "prototype-laboratory",
+    port: PORT,
+    version: labVersion.version,
+    commit: labVersion.commit,
+    commitFull: labVersion.commitFull,
+  });
 });
 
 app.get("/api/tdds", async (_req, res) => {
@@ -808,4 +837,5 @@ if (!bootProviders.configured) {
 
 app.listen(PORT, HOST, () => {
   console.log(`Prototype Laboratory → http://${HOST}:${PORT}`);
+  if (labVersion.commit) console.log(`[lab] version ${labVersion.commit}`);
 });

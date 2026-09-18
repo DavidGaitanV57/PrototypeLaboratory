@@ -3243,6 +3243,25 @@ try {
 const tddFijo = new URLSearchParams(location.search).get("tdd") || undefined;
 await loadTdds(tddFijo);
 
+async function loadLabVersionLabel() {
+  const el = document.getElementById("labVersion");
+  if (!el) return;
+  try {
+    const data = await fetch("/api/health").then((r) => r.json());
+    const ver = String(data?.version || data?.commit || "").trim();
+    if (!ver) {
+      el.hidden = true;
+      return;
+    }
+    el.textContent = `lab · ${ver}`;
+    el.title = data?.commitFull ? `Lab commit ${data.commitFull}` : `Lab version ${ver}`;
+    el.hidden = false;
+  } catch {
+    el.hidden = true;
+  }
+}
+void loadLabVersionLabel();
+
 // And when the document came in that way, the picker goes. Leaving a dropdown and an Import
 // button next to a TDD somebody else chose invites a change that would silently work on another
 // project's document. The mechanics stay — that is what tells you the TDD was read — and so does
