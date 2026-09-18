@@ -41,6 +41,7 @@ export function createInput(target = window) {
   }
 
   function onKeyDown(e) {
+    // Never steal events from chat/overlays — app.js capture blocks raw game listeners.
     if (uiOwnsFocus()) return;
     if (e.repeat) return;
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
@@ -49,10 +50,12 @@ export function createInput(target = window) {
     if ([" ", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) e.preventDefault();
   }
   function onKeyUp(e) {
-    if (uiOwnsFocus()) return;
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-    down.delete(k);
-    released.add(k);
+    if (down.has(k)) {
+      down.delete(k);
+      released.add(k);
+    }
+    if (uiOwnsFocus()) return;
   }
   function onMouseMove(e) {
     if (uiOwnsFocus()) return;
@@ -73,8 +76,9 @@ export function createInput(target = window) {
     clearState();
   }
 
-  target.addEventListener("keydown", onKeyDown);
-  target.addEventListener("keyup", onKeyUp);
+  const keyOpts = { capture: true };
+  target.addEventListener("keydown", onKeyDown, keyOpts);
+  target.addEventListener("keyup", onKeyUp, keyOpts);
   target.addEventListener("mousemove", onMouseMove);
   target.addEventListener("mousedown", onMouseDown);
   target.addEventListener("mouseup", onMouseUp);
@@ -113,7 +117,7 @@ export function createInput(target = window) {
     },
     mouseButton(i = 0) {
       if (uiOwnsFocus()) return false;
-      return (buttons & (1 << i)) !== 0;
+      return (buttons & 1 << i) !== 0;
     },
     mousePos() {
       return { x: mx, y: my };
@@ -124,8 +128,8 @@ export function createInput(target = window) {
     },
     clearState,
     dispose() {
-      target.removeEventListener("keydown", onKeyDown);
-      target.removeEventListener("keyup", onKeyUp);
+      target.removeEventListener("keydown", onKeyDown, keyOpts);
+      target.removeEventListener("keyup", onKeyUp, keyOpts);
       target.removeEventListener("mousemove", onMouseMove);
       target.removeEventListener("mousedown", onMouseDown);
       target.removeEventListener("mouseup", onMouseUp);

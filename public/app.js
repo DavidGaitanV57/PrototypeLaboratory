@@ -46,6 +46,9 @@ const chatModeTriggerText = document.getElementById("chatModeTriggerText");
 const chatModePopover = document.getElementById("chatModePopover");
 const chatModeBlurb = document.getElementById("chatModeBlurb");
 const chatApplyPlanBtn = document.getElementById("chatApplyPlanBtn");
+const chatAttachBtn = document.getElementById("chatAttachBtn");
+const chatAttachInput = document.getElementById("chatAttachInput");
+const chatAttachPreview = document.getElementById("chatAttachPreview");
 const startPicker = document.getElementById("startPicker");
 const startPickerTrigger = document.getElementById("startPickerTrigger");
 const startPickerTriggerText = document.getElementById("startPickerTriggerText");
@@ -116,19 +119,24 @@ let lastWorkLogLine = "";
 /** @type {"agent" | "ask" | "plan"} */
 let chatMode = "agent";
 const CHAT_MODE_KEY = "plab.chatMode";
-const CHAT_MODE_ORDER = ["agent", "ask", "plan"];
+/** Plan mode UI disabled for now. */
+const CHAT_MODE_ORDER = ["agent", "ask"];
+const CHAT_ATTACH_MAX = 3;
+const CHAT_ATTACH_MAX_BYTES = 3.5 * 1024 * 1024;
+/** @type {{ id: string, name: string, mimeType: string, dataUrl: string, data: string }[]} */
+let chatAttachments = [];
 /** @type {{ title: string, goal: string, approach: string, steps: object[], risks: string[], verify: string } | null} */
 let lastChatPlan = null;
 
 function normalizeChatMode(mode) {
-  if (mode === "ask" || mode === "plan") return mode;
+  if (mode === "ask") return "ask";
+  // Plan temporarily disabled — fall back to Agent.
   return "agent";
 }
 
 function chatModeLabel(mode) {
   const m = normalizeChatMode(mode);
   if (m === "ask") return "Ask";
-  if (m === "plan") return "Plan";
   return "Agent";
 }
 
@@ -139,18 +147,16 @@ function cycleChatMode(mode) {
 }
 
 function isReadOnlyChat(mode = chatMode) {
-  return mode === "ask" || mode === "plan";
+  return mode === "ask";
 }
 
 function chatModeBlurbText(mode = chatMode) {
   if (mode === "ask") return "Read-only diagnosis — no file writes this turn.";
-  if (mode === "plan") return "Read-only plan — check steps, revise with feedback, then Apply or Discard.";
-  return "Agent edits public/gameplay. Pick any provider/model for this turn.";
+  return "Agent edits public/gameplay. Attach a screenshot if useful.";
 }
 
 function chatModePlaceholder(mode = chatMode) {
   if (mode === "ask") return "Why are AI karts stuck on the first power-up?";
-  if (mode === "plan") return "Plan: add banana item and stop AI camping the first box…";
   return "Tune speed, jump, timer, fix loop…";
 }
 const PLAYABLE_RESUME_KEY = "plab.resumePlayable";
@@ -162,8 +168,120 @@ function updateGameInputBlock() {
     !benchmarkOverlay.hidden ||
     (syncReviewOverlay && !syncReviewOverlay.hidden) ||
     (planReviewOverlay && !planReviewOverlay.hidden);
+  const wasBlocked = document.body.dataset.plabGameInput === "blocked";
   document.body.dataset.plabGameInput = block ? "blocked" : "allowed";
-  if (block) window.dispatchEvent(new CustomEvent("plab:input-block"));
+  if (block) {
+    window.dispatchEvent(new CustomEvent("plab:input-block"));
+    if (!wasBlocked) flushStuckGameKeys();
+  }
+}
+
+/** True when a real text field already owns this key event. */
+function labTextFieldOwnsEvent(el) {
+  if (!el || el === document.body || el === document.documentElement) return false;
+  if (el === chatInput || el === planReviewInput) return true;
+  const tag = el.tagName;
+  if (tag === "TEXTAREA") return true;
+  if (tag === "INPUT") {
+    const type = String(el.type || "text").toLowerCase();
+    return !["button", "submit", "checkbox", "radio", "file", "reset", "color", "range"].includes(type);
+  }
+  if (el.isContentEditable) return true;
+  return false;
+}
+
+/**
+ * Playables often listen on window without checking plabGameInput.
+ * - Capture: if focus is outside a text field, steal keys into the composer.
+ * - Bubble (registered before gameplay mounts): stop game window listeners
+ *   even when the textarea already consumed the key.
+ */
+function installChatInputPriority() {
+  const passThrough = (e) => e.key === "Escape" || (e.key === "Tab" && e.shiftKey);
+
+  function insertIntoChat(e) {
+    if (chatDrawer?.hidden || !chatInput) return;
+    if (document.activeElement !== chatInput) chatInput.focus();
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    if (e.key === "Enter" && !e.shiftKey) {
+      chatForm?.requestSubmit?.();
+      return;
+    }
+    if (e.key === "Backspace") {
+      const start = chatInput.selectionStart ?? chatInput.value.length;
+      const end = chatInput.selectionEnd ?? start;
+      if (start !== end) {
+        chatInput.value = chatInput.value.slice(0, start) + chatInput.value.slice(end);
+        chatInput.selectionStart = chatInput.selectionEnd = start;
+      } else if (start > 0) {
+        chatInput.value = chatInput.value.slice(0, start - 1) + chatInput.value.slice(start);
+        chatInput.selectionStart = chatInput.selectionEnd = start - 1;
+      }
+      chatInput.dispatchEvent(new Event("input", { bubbles: true }));
+      return;
+    }
+    if (e.key.length === 1) {
+      const start = chatInput.selectionStart ?? chatInput.value.length;
+      const end = chatInput.selectionEnd ?? start;
+      chatInput.value = chatInput.value.slice(0, start) + e.key + chatInput.value.slice(end);
+      chatInput.selectionStart = chatInput.selectionEnd = start + e.key.length;
+      chatInput.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
+
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if (document.body.dataset.plabGameInput !== "blocked") return;
+      if (passThrough(e)) return;
+      if (labTextFieldOwnsEvent(e.target)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (!chatDrawer?.hidden) insertIntoChat(e);
+    },
+    true,
+  );
+
+  // Must register before gameplay mounts so we run first on the bubble path.
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if (document.body.dataset.plabGameInput !== "blocked") return;
+      if (passThrough(e)) return;
+      // Textarea already got the key on target phase; kill playable window listeners.
+      e.stopImmediatePropagation();
+    },
+    false,
+  );
+}
+
+function flushStuckGameKeys() {
+  const codes = [
+    "KeyW",
+    "KeyA",
+    "KeyS",
+    "KeyD",
+    "Space",
+    "ArrowUp",
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "KeyE",
+    "KeyR",
+    "ShiftLeft",
+    "ShiftRight",
+  ];
+  for (const code of codes) {
+    window.dispatchEvent(
+      new KeyboardEvent("keyup", {
+        bubbles: true,
+        cancelable: true,
+        code,
+        key: code.startsWith("Key") ? code.slice(3).toLowerCase() : code,
+      }),
+    );
+  }
 }
 
 function shortPath(p) {
@@ -721,7 +839,10 @@ function setChatOpen(open) {
   if (open) {
     applyChatDrawerWidth(readChatDrawerWidth());
     syncChatProviderControls();
-    requestAnimationFrame(() => chatInput?.focus?.());
+    requestAnimationFrame(() => {
+      chatInput?.focus?.();
+      resizeChatInput?.();
+    });
   } else if (!playEl.hidden) {
     requestAnimationFrame(() => canvas?.focus?.());
   }
@@ -827,8 +948,8 @@ function updateSessionTddBadge(slug) {
   badge.hidden = false;
 }
 
-function appendChat(role, text, { mode } = {}) {
-  if (!text) return;
+function appendChat(role, text, { mode, images } = {}) {
+  if (!text && !(images && images.length)) return;
   const div = document.createElement("div");
   div.className = `chat-msg chat-msg--${role}`;
   if (mode === "ask" || mode === "agent" || mode === "plan") {
@@ -839,10 +960,65 @@ function appendChat(role, text, { mode } = {}) {
     mark.setAttribute("aria-label", chatModeLabel(mode));
     div.appendChild(mark);
   }
+  const main = document.createElement("div");
+  main.className = "chat-msg__main";
   const body = document.createElement("span");
   body.className = "chat-msg__text";
-  body.textContent = text;
-  div.appendChild(body);
+  body.textContent =
+    text || (images?.length ? `(${images.length} screenshot${images.length === 1 ? "" : "s"})` : "");
+  main.appendChild(body);
+  if (images?.length) {
+    const thumbs = document.createElement("div");
+    thumbs.className = "chat-msg__thumbs";
+    for (const img of images) {
+      const el = document.createElement("img");
+      el.src = img.dataUrl || `data:${img.mimeType};base64,${img.data}`;
+      el.alt = img.name || "screenshot";
+      thumbs.appendChild(el);
+    }
+    main.appendChild(thumbs);
+  }
+  div.appendChild(main);
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "chat-msg__copy";
+  copyBtn.title = "Copy text";
+  copyBtn.setAttribute("aria-label", "Copy message text");
+  copyBtn.textContent = "Copy";
+  copyBtn.addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const payload = body.textContent || "";
+    if (!payload.trim()) return;
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(payload);
+      ok = true;
+    } catch {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = payload;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand("copy");
+        ta.remove();
+      } catch {
+        ok = false;
+      }
+    }
+    copyBtn.textContent = ok ? "Copied" : "Failed";
+    copyBtn.classList.toggle("is-copied", ok);
+    window.setTimeout(() => {
+      copyBtn.textContent = "Copy";
+      copyBtn.classList.remove("is-copied");
+    }, 1200);
+  });
+  div.appendChild(copyBtn);
+
   chatLog.appendChild(div);
   chatLog.scrollTop = chatLog.scrollHeight;
 }
@@ -919,6 +1095,7 @@ function createChatRunCollector(userMessage = "") {
   let resumable = false;
   let checkpointTurn = null;
   let planProposal = null;
+  let gameplayChanged = false;
   const userNorm = stripModeEcho(userMessage).toLowerCase();
 
   function isUserEcho(text) {
@@ -941,12 +1118,19 @@ function createChatRunCollector(userMessage = "") {
         resumable = true;
         if (ev.turn) checkpointTurn = ev.turn;
       }
+      if (ev.type === "gameplay-changed") {
+        gameplayChanged = true;
+        for (const p of ev.files || []) {
+          if (p) writtenFiles.add(shortPath(p));
+        }
+      }
       if (ev.type === "done") {
         if (ev.mode) mode = ev.mode;
         if (ev.resumable) {
           resumable = true;
           if (ev.turn) checkpointTurn = ev.turn;
         }
+        if (ev.gameplayChanged) gameplayChanged = true;
         const fromDone = planFromEvent(ev.plan);
         if (fromDone) planProposal = fromDone;
       }
@@ -962,7 +1146,7 @@ function createChatRunCollector(userMessage = "") {
       if (
         ev.type === "tool" &&
         ev.path &&
-        (ev.name === "write_file" || /write|edit|patch/i.test(ev.name || ""))
+        (ev.name === "write_file" || /write|edit|patch|search_replace|str_replace/i.test(ev.name || ""))
       ) {
         writtenFiles.add(shortPath(ev.path));
       }
@@ -1000,7 +1184,10 @@ function createChatRunCollector(userMessage = "") {
       return hadError;
     },
     get wroteFiles() {
-      return writtenFiles.size > 0;
+      return writtenFiles.size > 0 || gameplayChanged;
+    },
+    get gameplayChanged() {
+      return gameplayChanged;
     },
     get files() {
       return [...writtenFiles];
@@ -1126,9 +1313,232 @@ function setChatContinueVisible(info) {
   }
 }
 
-function setApplyPlanVisible(show) {
+function setApplyPlanVisible(_show) {
   if (!chatApplyPlanBtn) return;
-  chatApplyPlanBtn.hidden = !show;
+  // Plan mode disabled — never surface Review plan.
+  chatApplyPlanBtn.hidden = true;
+}
+
+function renderChatAttachPreview() {
+  if (!chatAttachPreview) return;
+  chatAttachPreview.replaceChildren();
+  if (!chatAttachments.length) {
+    chatAttachPreview.hidden = true;
+    return;
+  }
+  chatAttachPreview.hidden = false;
+  for (const att of chatAttachments) {
+    const wrap = document.createElement("div");
+    wrap.className = "chat-attach-thumb";
+    const img = document.createElement("img");
+    img.src = att.dataUrl;
+    img.alt = att.name;
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.title = "Remove";
+    rm.setAttribute("aria-label", "Remove attachment");
+    rm.textContent = "×";
+    rm.addEventListener("click", () => {
+      chatAttachments = chatAttachments.filter((a) => a.id !== att.id);
+      renderChatAttachPreview();
+    });
+    wrap.append(img, rm);
+    chatAttachPreview.appendChild(wrap);
+  }
+}
+
+function clearChatAttachments() {
+  chatAttachments = [];
+  renderChatAttachPreview();
+  if (chatAttachInput) chatAttachInput.value = "";
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("read failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Snapshot clipboard image bytes immediately — clipboard Blobs can go empty after the
+ * paste event yields to the microtask queue (common on Windows Chromium).
+ */
+async function snapshotClipboardImages(blobs) {
+  const out = [];
+  for (let i = 0; i < (blobs || []).length; i += 1) {
+    const blob = blobs[i];
+    if (!blob) continue;
+    let buf;
+    try {
+      buf = await blob.arrayBuffer();
+    } catch {
+      continue;
+    }
+    if (!buf?.byteLength) continue;
+    const type = /^image\//i.test(blob.type) ? blob.type : "image/png";
+    const base =
+      blob.name && blob.name !== "image.png" && blob.name !== "blob"
+        ? String(blob.name).replace(/\.\w+$/, "")
+        : `clipboard-${Date.now()}-${i}`;
+    out.push(new File([buf], `${base}.png`, { type, lastModified: Date.now() }));
+  }
+  return out;
+}
+
+/** Downscale + JPEG-compress so chat does not POST multi‑MB JSON (causes network errors). */
+async function compressChatImage(file, { maxEdge = 1280, quality = 0.72 } = {}) {
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    // Fallback for odd clipboard MIME / BMP-ish payloads.
+    const url = URL.createObjectURL(file);
+    try {
+      bitmap = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("image decode failed"));
+        img.src = url;
+      });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+  try {
+    const bw = bitmap.width || bitmap.naturalWidth || 0;
+    const bh = bitmap.height || bitmap.naturalHeight || 0;
+    if (!bw || !bh) throw new Error("empty image");
+    const scale = Math.min(1, maxEdge / Math.max(bw, bh));
+    const w = Math.max(1, Math.round(bw * scale));
+    const h = Math.max(1, Math.round(bh * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+    if (!blob || !blob.size) throw new Error("compress failed");
+    const stem =
+      String(file.name || "shot")
+        .replace(/\.\w+$/, "")
+        .replace(/[^\w.-]+/g, "_")
+        .slice(0, 40) || "shot";
+    return new File([blob], `${stem}.jpg`, {
+      type: "image/jpeg",
+      lastModified: Date.now(),
+    });
+  } finally {
+    bitmap?.close?.();
+  }
+}
+
+/** Always rebuild upload File without fetch(data:) — data-URL fetch fails on some Chromium builds. */
+function fileFromChatAttachment(a) {
+  if (a?.file instanceof File && a.file.size > 0) return a.file;
+  if (a?.file instanceof Blob && a.file.size > 0) {
+    return new File([a.file], a.name || "shot.jpg", {
+      type: a.mimeType || a.file.type || "image/jpeg",
+      lastModified: Date.now(),
+    });
+  }
+  const dataUrl = String(a?.dataUrl || "");
+  const m = /^data:([^;,]+)?(;base64)?,(.*)$/i.exec(dataUrl);
+  if (!m) throw new Error("Screenshot attachment is incomplete — paste/attach again");
+  const mime = (m[1] || a?.mimeType || "image/jpeg").trim() || "image/jpeg";
+  const payload = m[3] || "";
+  if (m[2]) {
+    const bin = atob(payload);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+    return new File([bytes], a.name || "shot.jpg", { type: mime, lastModified: Date.now() });
+  }
+  const bytes = new TextEncoder().encode(decodeURIComponent(payload));
+  return new File([bytes], a.name || "shot.jpg", { type: mime, lastModified: Date.now() });
+}
+
+function scrubPastedImageJunkFromComposer() {
+  if (!chatInput) return;
+  const v = chatInput.value || "";
+  if (!v) return;
+  if (/^data:image\//i.test(v.trim()) || /data:image\/[a-zA-Z]+;base64,/.test(v) || v.length > 8000) {
+    chatInput.value = "";
+    resizeChatInput();
+  }
+}
+
+async function addChatAttachments(fileList, { fromClipboard = false } = {}) {
+  const files = [...(fileList || [])].filter(
+    (f) => f && (/^image\//i.test(f.type) || f.size > 0 || f instanceof Blob),
+  );
+  for (let i = 0; i < files.length; i += 1) {
+    const file = files[i];
+    if (chatAttachments.length >= CHAT_ATTACH_MAX) {
+      appendChat("sys", `Max ${CHAT_ATTACH_MAX} screenshots per message.`);
+      break;
+    }
+    // Clipboard PNGs are often >3.5MB before compress — only gate after JPEG.
+    if (!fromClipboard && file.size > CHAT_ATTACH_MAX_BYTES) {
+      appendChat("sys", `${file.name || "Image"} is too large (max ~3.5MB).`);
+      continue;
+    }
+    try {
+      const compressed = await compressChatImage(file, {
+        maxEdge: fromClipboard ? 960 : 1280,
+        quality: fromClipboard ? 0.62 : 0.72,
+      });
+      if (compressed.size > CHAT_ATTACH_MAX_BYTES) {
+        appendChat("sys", `${file.name || "Image"} is still too large after compress.`);
+        continue;
+      }
+      const dataUrl = await readFileAsDataUrl(compressed);
+      if (!dataUrl || dataUrl.length < 32) throw new Error("empty screenshot data URL");
+      chatAttachments.push({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: compressed.name || "screenshot.jpg",
+        mimeType: "image/jpeg",
+        dataUrl,
+        file: compressed,
+      });
+    } catch (err) {
+      appendChat("sys", `Could not use clipboard/image: ${err?.message || err}`);
+    }
+  }
+  renderChatAttachPreview();
+}
+
+function networkFailMessage(err, fallback) {
+  const hint = String(err?.message || err || "");
+  if (/failed to fetch|networkerror|network request failed|network error/i.test(hint)) {
+    return (
+      fallback ||
+      "Network request failed — often a too-large chat payload. Screenshots upload separately; retry Ctrl+V, or use 📎."
+    );
+  }
+  return hint || fallback || "Network request failed";
+}
+
+async function uploadChatAttachments(attach) {
+  if (!sessionId || !attach?.length) return [];
+  const fd = new FormData();
+  for (const a of attach) {
+    const file = fileFromChatAttachment(a);
+    fd.append("images", file, file.name || "shot.jpg");
+  }
+  let res;
+  try {
+    res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/chat-images`, {
+      method: "POST",
+      body: fd,
+    });
+  } catch (err) {
+    throw new Error(networkFailMessage(err, "Screenshot upload failed (network). Try 📎 or a smaller paste."));
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Image upload failed (${res.status})`);
+  return Array.isArray(data.images) ? data.images : [];
 }
 
 async function refreshCheckpointButton() {
@@ -1153,7 +1563,18 @@ async function readSSE(url, options, onEvent) {
     signal: controller.signal,
   };
   try {
-    const res = await fetch(url, opts);
+    let res;
+    try {
+      res = await fetch(url, opts);
+    } catch (err) {
+      if (err?.name === "AbortError") throw err;
+      throw new Error(
+        networkFailMessage(
+          err,
+          "Network request failed — often a too-large chat payload. Screenshots upload separately; retry Ctrl+V, or use 📎 / a vision model.",
+        ),
+      );
+    }
     if (!res.ok) {
       const t = await res.text();
       throw new Error(t || res.statusText);
@@ -1676,17 +2097,7 @@ function setChatMode(mode, { close = true } = {}) {
 }
 
 function updateProviderHint() {
-  const p = currentProvider();
-  if (!p) {
-    providerHint.textContent = "";
-    return;
-  }
-  if (p.id === "cursor") {
-    providerHint.textContent =
-      "Cursor SDK · pick model (auto lets Cursor choose). Requires CURSOR_API_KEY.";
-  } else {
-    providerHint.textContent = "";
-  }
+  if (providerHint) providerHint.textContent = "";
 }
 
 function setPingMenuOpen(open) {
@@ -1992,8 +2403,11 @@ async function mountGame() {
   try {
     mod = await import(`/gameplay/main.js?t=${bust}`);
   } catch (err) {
+    const detail = String(err?.message || err || "").replace(/\s+/g, " ").trim().slice(0, 280);
     throw new Error(
-      "Could not load /gameplay/main.js — Generate Final may have stopped before writing the entry file. Check Benchmark (max_turns) or run Generate again.",
+      detail
+        ? `Could not load /gameplay/main.js (${detail}). If Generate Final stopped early, run it again; otherwise fix the import/syntax error via Chat.`
+        : "Could not load /gameplay/main.js — Generate Final may have stopped before writing the entry file. Run Generate again.",
     );
   }
   if (typeof mod.mount !== "function") {
@@ -2158,7 +2572,8 @@ chatModeAsk?.addEventListener("click", (e) => {
 });
 chatModePlan?.addEventListener("click", (e) => {
   e.preventDefault();
-  setChatMode("plan");
+  appendChat("sys", "Plan mode is temporarily disabled. Use Agent or Ask.");
+  setChatMode("agent");
 });
 
 tddImport.addEventListener("change", async () => {
@@ -2431,11 +2846,79 @@ chatForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!sessionId) return appendChat("sys", "Generate Final or Continue first.");
   const message = chatInput.value.trim();
-  if (!message) return;
+  const images = chatAttachments.map((a) => ({
+    name: a.name,
+    mimeType: a.mimeType,
+    dataUrl: a.dataUrl,
+    file: a.file,
+  }));
+  if (!message && !images.length) return;
   chatInput.value = "";
   resizeChatInput();
-  await sendChatTurn(message);
+  clearChatAttachments();
+  await sendChatTurn(message || "See attached screenshot(s).", { images });
 });
+
+chatAttachBtn?.addEventListener("click", () => chatAttachInput?.click());
+chatAttachInput?.addEventListener("change", async () => {
+  await addChatAttachments(chatAttachInput.files);
+  chatAttachInput.value = "";
+});
+
+async function handleChatImagePaste(e) {
+  const cd = e.clipboardData;
+  if (!cd) return false;
+
+  const fromItems = [...(cd.items || [])]
+    .filter((i) => /^image\//i.test(i.type))
+    .map((i) => i.getAsFile())
+    .filter(Boolean);
+  const fromFiles = [...(cd.files || [])].filter(
+    (f) => /^image\//i.test(f.type) || /\.(png|jpe?g|webp|gif)$/i.test(f.name || ""),
+  );
+  // Windows often exposes the same shot as both items AND files — take one source only.
+  const raw = fromItems.length ? fromItems : fromFiles;
+  if (!raw.length) return false;
+
+  // Stop the browser from dumping binary/HTML/data-URLs into the textarea.
+  e.preventDefault();
+  e.stopPropagation();
+  if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
+
+  // Snapshot bytes before any further await — clipboard blobs expire quickly on Windows.
+  const durable = await snapshotClipboardImages(raw.slice(0, CHAT_ATTACH_MAX));
+  if (!durable.length) {
+    appendChat("sys", "Clipboard image was empty — try Win+Shift+S again, or use 📎.");
+    return true;
+  }
+
+  // Dedupe identical snapshots (same byte length + prefix hash).
+  const uniq = [];
+  const seen = new Set();
+  for (const f of durable) {
+    const buf = await f.arrayBuffer();
+    const u8 = new Uint8Array(buf);
+    let h = u8.byteLength;
+    for (let i = 0; i < Math.min(64, u8.byteLength); i += 1) h = (h * 33 + u8[i]) >>> 0;
+    const key = `${u8.byteLength}:${h}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniq.push(new File([buf], f.name, { type: f.type, lastModified: f.lastModified }));
+  }
+
+  await addChatAttachments(uniq, { fromClipboard: true });
+  scrubPastedImageJunkFromComposer();
+  return true;
+}
+
+// Capture on the whole drawer so paste works even if focus isn't on the textarea.
+chatDrawer?.addEventListener(
+  "paste",
+  (e) => {
+    void handleChatImagePaste(e);
+  },
+  true,
+);
 
 function resizeChatInput() {
   if (!chatInput) return;
@@ -2454,26 +2937,52 @@ chatInput?.addEventListener("keydown", (e) => {
 });
 resizeChatInput();
 
-async function sendChatTurn(message, { displayText } = {}) {
-  const mode = chatMode;
-  appendChat("user", displayText || message, { mode });
+async function sendChatTurn(message, { displayText, images } = {}) {
+  const mode = normalizeChatMode(chatMode);
+  const attach = Array.isArray(images) ? images : [];
+  let text = String(message || "").trim();
+  // Guard: accidental paste of huge data-URLs into the composer.
+  if (/^data:image\//i.test(text) || text.length > 20000) {
+    appendChat(
+      "sys",
+      "Message looked like a raw pasted image/data URL. Use 📎 or Ctrl+V so the screenshot attaches as a thumbnail, then send a short question.",
+    );
+    return;
+  }
+  for (const a of attach) {
+    if (!a?.file && !a?.dataUrl) {
+      appendChat("sys", "Screenshot attachment is incomplete — remove it and paste/attach again.");
+      return;
+    }
+  }
+  appendChat("user", displayText || text, { mode, images: attach });
   setChatContinueVisible(null);
-  if (mode !== "plan") setApplyPlanVisible(false);
-  const runNotes = createChatRunCollector(message);
+  setApplyPlanVisible(false);
+  const runNotes = createChatRunCollector(text);
   showWorkOverlay({
-    title:
-      mode === "ask"
-        ? "Ask (read-only)"
-        : mode === "plan"
-          ? "Plan (read-only)"
-          : "Chat iteration",
+    title: mode === "ask" ? "Ask (read-only)" : "Chat iteration",
     eyebrow: chatModeLabel(mode),
-    status: "Sending…",
+    status: attach.length ? `Uploading ${attach.length} screenshot(s)…` : "Sending…",
   });
   try {
     const id = chatProviderSelect?.value || providerSelect.value;
     const model = selectedChatModelValue();
-    if (id && model) await persistProviderSelectionFrom(id, model);
+    if (id && model) {
+      try {
+        await persistProviderSelectionFrom(id, model);
+      } catch (err) {
+        // Don't abort an image Ask just because provider ping/persist hiccuped.
+        console.warn("[chat] persist provider failed", err);
+      }
+    }
+
+    let imageIds = [];
+    if (attach.length) {
+      const uploaded = await uploadChatAttachments(attach);
+      imageIds = uploaded.map((u) => u.id).filter(Boolean);
+      if (!imageIds.length) throw new Error("Screenshot upload returned no image ids");
+      setWorkStatus("Sending…");
+    }
 
     let chatFailed = false;
     await readSSE(
@@ -2481,7 +2990,11 @@ async function sendChatTurn(message, { displayText } = {}) {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, mode }),
+        body: JSON.stringify({
+          message: text,
+          mode,
+          imageIds,
+        }),
       },
       (ev) => {
         if (ev?.type === "error") chatFailed = true;
@@ -2498,17 +3011,6 @@ async function sendChatTurn(message, { displayText } = {}) {
       return;
     }
     setChatContinueVisible(null);
-    if (mode === "plan" && !chatFailed && !runNotes.hadError) {
-      const plan = runNotes.planProposal;
-      if (plan && (plan.steps?.length || plan.goal || plan.title)) {
-        presentChatPlan(plan);
-        appendChat("assistant", summarizeChatPlan(plan), { mode: "plan" });
-        return;
-      }
-      if (lastChatPlan) setApplyPlanVisible(true);
-      appendChat("assistant", "No checklist came back. Try Plan again.", { mode: "plan" });
-      return;
-    }
     if (mode === "agent" && !chatFailed && !runNotes.hadError && runNotes.wroteFiles) {
       schedulePlayableReload({
         assistantReply: reply,
@@ -2526,7 +3028,7 @@ async function sendChatTurn(message, { displayText } = {}) {
       await refreshCheckpointButton();
       return;
     }
-    appendChat("sys", String(err.message || err));
+    appendChat("sys", networkFailMessage(err, String(err.message || err)));
     hideWorkOverlay();
   }
 }
@@ -2761,4 +3263,5 @@ try {
 }
 skyIcon.innerHTML = ICON_SUN;
 setChatOpen(false);
+installChatInputPriority();
 await maybeResumeAfterReload();

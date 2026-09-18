@@ -195,6 +195,7 @@
           </header>
           <div id="chatLog" class="chat-log"></div>
           <form id="chatForm" class="chat-form">
+            <div id="chatAttachPreview" class="chat-attach-preview" hidden></div>
             <textarea
               id="chatInput"
               rows="1"
@@ -238,16 +239,32 @@
                         <span class="model-picker__option-desc">Diagnose only, no writes</span>
                       </span>
                     </button>
-                    <button type="button" class="model-picker__option" data-mode="plan" id="chatModePlan">
+                    <button type="button" class="model-picker__option" data-mode="plan" id="chatModePlan" hidden disabled>
                       <span class="model-picker__option-main">
                         <span class="model-picker__option-title">Plan</span>
-                        <span class="model-picker__option-desc">Read-only implementation plan</span>
+                        <span class="model-picker__option-desc">Temporarily disabled</span>
                       </span>
                     </button>
                   </div>
                 </div>
               </div>
               <div class="chat-form__toolbar-end">
+                <input
+                  id="chatAttachInput"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  multiple
+                  hidden
+                />
+                <button
+                  type="button"
+                  id="chatAttachBtn"
+                  class="btn btn--ghost btn--sm chat-form__attach"
+                  title="Attach screenshot"
+                  aria-label="Attach screenshot"
+                >
+                  📎
+                </button>
                 <div class="model-picker model-picker--chat" id="chatPicker">
                   <button
                     type="button"
