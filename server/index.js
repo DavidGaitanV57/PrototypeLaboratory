@@ -16,7 +16,9 @@ import {
 } from "./agent/providers/catalog.js";
 import { pingProviderModel, pingProviderModels } from "./agent/providers/ping.js";
 import { initBenchmarkStore, getBenchmarkState, clearBenchmark, recordBenchmark } from "./agent/benchmarkStore.js";
+import { gameplayFingerprint } from "./agent/gameplayEvidence.js";
 import { assertSafeSlug, isInsideDir } from "./security/paths.js";
+import { purgeChatAttachments, pruneSessionAttachDir } from "./chatAttachCleanup.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -39,12 +41,24 @@ const upload = multer({
     cb(null, true);
   },
 });
+
+const uploadChatImages = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 4 * 1024 * 1024, files: 3 },
+  fileFilter(_req, file, cb) {
+    if (!/^image\/(png|jpeg|jpg|webp|gif)$/i.test(String(file.mimetype || ""))) {
+      cb(new Error("Only PNG/JPEG/WebP/GIF images are allowed"));
+      return;
+    }
+    cb(null, true);
+  },
+});
 const sessions = new Map();
 const reloadClients = new Set();
 
 const app = express();
 app.disable("x-powered-by");
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "8mb" }));
 
 // Who may put this lab inside a frame.
 //
@@ -75,6 +89,73 @@ function parseSlug(raw) {
   } catch {
     return null;
   }
+}
+
+/** @param {unknown} raw */
+function normalizeChatImages(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const item of raw.slice(0, 3)) {
+    if (!item || typeof item !== "object") continue;
+    const mimeType = String(item.mimeType || item.mime || "").toLowerCase();
+    if (!/^image\/(png|jpeg|jpg|webp|gif)$/.test(mimeType)) continue;
+    let data = String(item.data || item.dataBase64 || "").replace(/\s+/g, "");
+    const dataUrl = String(item.dataUrl || "");
+    if (!data && dataUrl.startsWith("data:")) {
+      const i = dataUrl.indexOf(",");
+      if (i > 0) data = dataUrl.slice(i + 1);
+    }
+    // Keep inline payloads small — large shots must use /chat-images upload.
+    if (!data || data.length > 900_000) continue;
+    out.push({
+      mimeType: mimeType === "image/jpg" ? "image/jpeg" : mimeType,
+      data,
+      name: String(item.name || `shot-${out.length + 1}`).slice(0, 80),
+      relPath: item.relPath ? String(item.relPath).replace(/\\/g, "/") : "",
+    });
+  }
+  return out;
+}
+
+/**
+ * Load screenshots previously stored under sessions/chat-attach/<sessionId>/.
+ * @param {string} sessionId
+ * @param {unknown} ids
+ */
+async function loadChatImagesById(sessionId, ids) {
+  if (!Array.isArray(ids) || !ids.length) return [];
+  const safeSession = String(sessionId || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  if (!safeSession) return [];
+  const dir = path.join(SESSIONS, "chat-attach", safeSession);
+  const out = [];
+  for (const rawId of ids.slice(0, 3)) {
+    const id = String(rawId || "").replace(/[^a-zA-Z0-9_-]/g, "");
+    if (!id) continue;
+    for (const ext of ["jpg", "jpeg", "png", "webp", "gif"]) {
+      const abs = path.join(dir, `${id}.${ext}`);
+      try {
+        const buf = await fs.readFile(abs);
+        const mimeType =
+          ext === "png"
+            ? "image/png"
+            : ext === "webp"
+              ? "image/webp"
+              : ext === "gif"
+                ? "image/gif"
+                : "image/jpeg";
+        out.push({
+          mimeType,
+          data: buf.toString("base64"),
+          name: `${id}.${ext}`,
+          relPath: `sessions/chat-attach/${safeSession}/${id}.${ext}`,
+        });
+        break;
+      } catch {
+        /* try next ext */
+      }
+    }
+  }
+  return out;
 }
 
 // Vendor three from node_modules
@@ -382,10 +463,19 @@ app.post("/api/sessions/:id/chat", async (req, res) => {
     const message = String(req.body?.message || "").trim();
     if (!message) throw new Error("message required");
     if (message.length > 20000) throw new Error("message too long");
-    const mode =
+    const rawMode =
       req.body?.mode === "ask" ? "ask" : req.body?.mode === "plan" ? "plan" : "agent";
+    // Plan mode UI is disabled for now — coerce legacy clients to Ask.
+    const mode = rawMode === "plan" ? "ask" : rawMode;
+    if (rawMode === "plan") {
+      send({ type: "status", message: "Plan mode is disabled — running as Ask (read-only)." });
+    }
+    const uploaded = await loadChatImagesById(req.params.id, req.body?.imageIds);
+    const inline = normalizeChatImages(req.body?.images);
+    const images = [...uploaded, ...inline].slice(0, 3);
     const outcome = await session.chat(message, {
       mode,
+      images,
       onEvent: (ev) => send(ev),
     });
     if (mode === "agent" && !outcome?.resumable) broadcastReload("chat");
@@ -393,6 +483,7 @@ app.post("/api/sessions/:id/chat", async (req, res) => {
       type: "done",
       mode: outcome?.mode || mode,
       resumable: !!outcome?.resumable,
+      gameplayChanged: !!outcome?.gameplayChanged,
       ...(outcome?.plan ? { plan: outcome.plan } : {}),
       ...(session.getCheckpointInfo?.() || {}),
     });
@@ -401,6 +492,42 @@ app.post("/api/sessions/:id/chat", async (req, res) => {
   } finally {
     res.end();
   }
+});
+
+app.post("/api/sessions/:id/chat-images", (req, res) => {
+  uploadChatImages.array("images", 3)(req, res, async (err) => {
+    if (err) return res.status(400).json({ error: err.message || "Upload failed" });
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: "Unknown session" });
+    try {
+      const safeSession = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
+      const dir = path.join(SESSIONS, "chat-attach", safeSession);
+      await fs.mkdir(dir, { recursive: true });
+      const out = [];
+      for (const file of req.files || []) {
+        const id = randomUUID().replace(/-/g, "").slice(0, 16);
+        const ext = /png/i.test(file.mimetype)
+          ? "png"
+          : /webp/i.test(file.mimetype)
+            ? "webp"
+            : /gif/i.test(file.mimetype)
+              ? "gif"
+              : "jpg";
+        const filename = `${id}.${ext}`;
+        await fs.writeFile(path.join(dir, filename), file.buffer);
+        out.push({
+          id,
+          name: file.originalname || filename,
+          mimeType: file.mimetype,
+          relPath: `sessions/chat-attach/${safeSession}/${filename}`,
+        });
+      }
+      await pruneSessionAttachDir(dir);
+      res.json({ images: out });
+    } catch (e) {
+      res.status(500).json({ error: e.message || String(e) });
+    }
+  });
 });
 
 app.post("/api/sessions/:id/continue", async (req, res) => {
@@ -421,6 +548,7 @@ app.post("/api/sessions/:id/continue", async (req, res) => {
       mode,
       continued: true,
       resumable: !!outcome?.resumable,
+      gameplayChanged: !!outcome?.gameplayChanged,
       ...(outcome?.plan ? { plan: outcome.plan } : {}),
       ...(session.getCheckpointInfo?.() || {}),
     });
@@ -540,10 +668,16 @@ app.get("/api/gameplay/status", async (_req, res) => {
   // from somebody else's, which is the confusion this endpoint used to feed.
   const project = await slugActivo();
   try {
-    await fs.access(path.join(GAMEPLAY, "main.js"));
-    res.json({ ready: true, entry: "/gameplay/main.js", project });
+    const fp = await gameplayFingerprint(ROOT);
+    res.json({
+      ready: fp.ready,
+      entry: "/gameplay/main.js",
+      fingerprint: fp.fingerprint,
+      files: fp.files,
+      project,
+    });
   } catch {
-    res.json({ ready: false, project });
+    res.json({ ready: false, fingerprint: "", files: [], project });
   }
 });
 
@@ -649,6 +783,18 @@ await fs.mkdir(GAMEPLAY, { recursive: true });
 await fs.mkdir(path.join(ROOT, "exports"), { recursive: true });
 await initProviderCatalog(ROOT);
 await initBenchmarkStore(ROOT);
+
+try {
+  const purged = await purgeChatAttachments(SESSIONS);
+  if (purged.removedFiles > 0) {
+    const mb = (purged.removedBytes / (1024 * 1024)).toFixed(2);
+    console.log(
+      `[chat-attach] purged ${purged.removedFiles} file(s) (${mb} MB) · kept ${purged.keptFiles}`,
+    );
+  }
+} catch (err) {
+  console.warn(`[chat-attach] purge skipped: ${err?.message || err}`);
+}
 
 const bootProviders = providerStatus();
 if (!bootProviders.configured) {

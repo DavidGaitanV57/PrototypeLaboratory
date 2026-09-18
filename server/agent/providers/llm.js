@@ -97,7 +97,21 @@ function messagesToResponsesInput(messages) {
       continue;
     }
     if (m.role === "user") {
-      input.push({ role: "user", content: String(m.content || "") });
+      if (Array.isArray(m.content)) {
+        const parts = [];
+        for (const part of m.content) {
+          if (!part) continue;
+          if (part.type === "text" || typeof part.text === "string") {
+            parts.push({ type: "input_text", text: String(part.text || "") });
+          } else if (part.type === "image_url") {
+            const url = part.image_url?.url || part.image_url || "";
+            if (url) parts.push({ type: "input_image", image_url: url });
+          }
+        }
+        input.push({ role: "user", content: parts.length ? parts : String(m.content) });
+      } else {
+        input.push({ role: "user", content: String(m.content || "") });
+      }
       continue;
     }
     if (m.role === "assistant") {
@@ -121,6 +135,30 @@ function messagesToResponsesInput(messages) {
     }
   }
   return { instructions, input };
+}
+
+function userMessageContent(prompt, images = []) {
+  const text = String(prompt || "");
+  if (!Array.isArray(images) || !images.length) return text;
+  const parts = [{ type: "text", text }];
+  for (const img of images.slice(0, 3)) {
+    const mime = String(img.mimeType || "image/png");
+    const data = String(img.data || "").replace(/\s+/g, "");
+    if (!data) continue;
+    // ~375KB binary — larger payloads often reset the provider connection.
+    if (data.length > 500_000) {
+      parts.push({
+        type: "text",
+        text: `(screenshot omitted — too large for this provider; re-paste or use 📎 with a smaller shot)`,
+      });
+      continue;
+    }
+    parts.push({
+      type: "image_url",
+      image_url: { url: `data:${mime};base64,${data}` },
+    });
+  }
+  return parts.length > 1 ? parts : text;
 }
 
 function pendingFunctionOutputs(messages) {
@@ -308,7 +346,7 @@ export function createLlmProvider({
     clearCheckpoint() {
       checkpoint = null;
     },
-    async run(prompt, { onEvent, signal, resumeMessages, resumeTurn } = {}) {
+    async run(prompt, { onEvent, signal, resumeMessages, resumeTurn, images } = {}) {
       aborted = false;
       const ac = new AbortController();
       ctrl.current = ac;
@@ -340,7 +378,7 @@ export function createLlmProvider({
                     ? "You write a short implementation plan as JSON for an existing playable. Read-only tools only. No file edits. No code samples. End with the JSON object (title, goal, approach, steps[{id,file,title,detail}], risks, verify)."
                     : "You are a gameplay prototyping agent. Use tools to read/write files. Obey write policy in the user prompt. Keep working until the task is complete — do not stop early.",
             },
-            { role: "user", content: prompt },
+            { role: "user", content: userMessageContent(prompt, images) },
           ];
 
       if (resuming) {
@@ -591,8 +629,14 @@ export function createLlmProvider({
           return { status: "cancelled", resumable: true };
         }
         saveCheckpoint(messages, turn);
-        emitBenchmark("error", err?.message || err);
-        throw err;
+        const raw = String(err?.message || err || "");
+        const hadImages = Array.isArray(images) && images.length > 0;
+        const nicer =
+          hadImages && isRetryableNetwork(err)
+            ? `Provider network error while sending screenshot(s): ${raw.slice(0, 200)}. Try a smaller paste, 📎, or a vision model (OpenAI/Anthropic).`
+            : raw;
+        emitBenchmark("error", nicer);
+        throw new Error(nicer);
       } finally {
         signal?.removeEventListener?.("abort", onParentAbort);
       }
