@@ -27,6 +27,7 @@ import {
   advisePlayability,
   formatAdviceForChat,
 } from "./playabilityAdvisor.js";
+import { buildRuntimeApiIndex } from "./runtimeIndex.js";
 import { recordBenchmark } from "./benchmarkStore.js";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -247,6 +248,7 @@ export async function createSession({ root, tddsRoot, slug }) {
       try {
         const tdd = await readTdd(tddsRoot, slug);
         const picked = await pickProvider(root, { writeMode: "generate", slug });
+        const runtimeIndex = await buildRuntimeApiIndex(root).catch(() => "");
         const prompt = buildGenerateFinalPrompt({
           slug,
           tddText: tdd.text,
@@ -254,6 +256,7 @@ export async function createSession({ root, tddsRoot, slug }) {
           agentsMd,
           pack,
           runtime: picked.kind === "cursor" ? "cursor" : "llm",
+          runtimeIndex,
         });
         const result = await runProvider(prompt, {
           writeMode: "generate",
@@ -323,6 +326,7 @@ export async function createSession({ root, tddsRoot, slug }) {
         }
         const writeMode = readOnly ? mode : "chat";
         const picked = await pickProvider(root, { writeMode, slug });
+        const runtimeIndex = await buildRuntimeApiIndex(root, { compact: true }).catch(() => "");
         const prompt = buildChatPrompt({
           slug,
           message: trimmed,
@@ -333,6 +337,7 @@ export async function createSession({ root, tddsRoot, slug }) {
           gameplayContext,
           mode,
           runtime: picked.kind === "cursor" ? "cursor" : "llm",
+          runtimeIndex,
         });
         const assistantChunks = [];
         const onEvent = (ev) => {

@@ -90,12 +90,22 @@ else ok(`export copied ${result.filesCopied} files`);
 
 if (result.ok) {
   const entries = await fs.readdir(dest);
-  for (const need of ["index.html", "play.js", "server.mjs", "gameplay", "runtime", "tdd"]) {
-    if (entries.includes(need)) ok(`export has ${need}/`);
+  for (const need of ["index.html", "play.js", "play.css", "tdd", "README.md", "EXPORT.json"]) {
+    if (entries.includes(need)) ok(`export has ${need}`);
     else fail(`export missing ${need}`);
   }
-  if (!entries.includes("app.js")) ok("export omits lab app.js");
-  else fail("lab app.js must not ship");
+  for (const gone of ["server.mjs", "runtime", "gameplay", "app.js", "vendor"]) {
+    if (!entries.includes(gone)) ok(`export omits ${gone}`);
+    else fail(`portable export must not ship ${gone}`);
+  }
+  const play = await fs.readFile(path.join(dest, "play.js"), "utf8");
+  if (play.length > 100 && /mount|getElementById\(["']game["']\)/.test(play)) {
+    ok("play.js is a bundled IIFE");
+  } else fail("play.js bundle looks empty or incomplete");
+  const html = await fs.readFile(path.join(dest, "index.html"), "utf8");
+  if (html.includes('src="./play.js"') && !html.includes('type="module"')) {
+    ok("index.html loads classic play.js (file:// safe)");
+  } else fail("index.html should load ./play.js without type=module");
 }
 
 await fs.rm(tmp, { recursive: true, force: true });

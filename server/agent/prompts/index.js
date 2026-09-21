@@ -21,7 +21,6 @@ export async function loadPromptPack() {
     syncPreview,
     genreLoop,
     verticalSlice,
-    presentation,
   ] = await Promise.all([
     readPrompt("playable-quality.md"),
     readPrompt("generate-final.md"),
@@ -32,7 +31,6 @@ export async function loadPromptPack() {
     readPrompt("sync-preview.md"),
     readPrompt("genre-loop.md"),
     readPrompt("vertical-slice.md"),
-    readPrompt("presentation.md"),
   ]);
   return {
     quality,
@@ -44,11 +42,10 @@ export async function loadPromptPack() {
     syncPreview,
     genreLoop,
     verticalSlice,
-    presentation,
   };
 }
 
-/** Compact rules — replaces pasting AGENTS + full quality/vertical/genre/presentation packs. */
+/** Compact rules — replaces pasting AGENTS + full quality/vertical/genre packs. */
 const GENERATE_COMPACT_CONTRACTS = `## Compact contracts (do not re-read whole prompt packs)
 
 Write **only** \`public/gameplay/**\`. Never edit \`public/runtime/**\`, lab UI, \`server/**\`, or the TDD.
@@ -57,15 +54,28 @@ Entry: \`main.js\` exports \`mount(canvas, { hudRoot })\` + \`unmount()\`. Prefe
 
 Required: \`hud.js\` (HudKit), \`juice.js\` (JuiceKit). Full loop: start → verb → win/lose → restart (no F5). Delta-time movement. HUD off bottom-right.
 
-Graybox meshes (primitives). Raise look when TDD defines fog/grain/vignette/palette via PresentationKit. Theme HudKit (\`arcade\`/\`party\` vs \`liminal\`/\`muted\`/\`stealth\` or \`themeFromPalette\`) from TDD mood.
+Graybox meshes (primitives). Theme HudKit (\`arcade\`/\`party\` vs \`liminal\`/\`muted\`/\`stealth\` or \`themeFromPalette\`) from TDD mood — same panels/layout, quieter or louder skin only.
 
-Kits (import, do **not** read full runtime sources): \`/runtime/Engine.js\`, SceneKit, Input, Primitives, CameraRig, HudKit, JuiceKit, PathKit, MinimapKit, PresentationKit.
+Kart: PathKit laps must increment; finish at totalLaps. Collector/arena/platformer: live HUD + win/lose + restart.
 
-- Hud: \`createHud(root, { theme })\` — panels, stats, toast, showResult.
-- Juice: \`createJuice({ camera, canvas })\` — shake/flash/hit-stop.
-- Look: \`createPresentation({ canvas })\` — applyFog, setGrain/Vignette/Vhs/Wash, trails/curbs when TDD asks.
+### Kit usage (exact — no feature detection, no wrappers)
 
-Kart: PathKit laps must increment; finish at totalLaps. Collector/arena/platformer: live HUD + win/lose + restart.`;
+\`\`\`js
+import { createHud, themeFromPalette } from "/runtime/HudKit.js";
+const hud = createHud(hudRoot, { theme: "arcade" }); // or themeFromPalette({ accent: "#C9B45A", preset: "liminal" })
+const panel = hud.panel("top-left", { minWidth: "200px" });   // anchors: top-left|top-right|top-center|bottom-left|bottom-center
+const score = panel.stat("score", "SCORE", { large: true });  // score.set("12")
+const bar = panel.bar("stamina", "STAMINA");                  // bar.set(0..1)
+hud.controlsHint("<b>WASD</b> move · <b>R</b> restart");
+hud.toast("Checkpoint");
+hud.showResult("YOU ESCAPED", ["Time 02:14"], { onPlayAgain: restart });
+hud.hideResult(); hud.dispose();
+
+import { createJuice } from "/runtime/JuiceKit.js";
+const juice = createJuice({ camera, canvas });
+const dt = juice.filterDelta(rawDt); juice.update(rawDt);
+juice.shake(0.35); juice.flash("#ff5252"); juice.hitStop(0.05);
+\`\`\``;
 
 /**
  * Short TDD digest for Generate Final — enough fantasy/loop/mechanics list without the full doc.
@@ -98,7 +108,7 @@ export function summarizeTddForPrompt(tddText = "", { maxChars = 10_000 } = {}) 
   let out = chunks.join("\n\n").trim();
   if (!out) out = text.slice(0, maxChars);
   if (out.length > maxChars) out = `${out.slice(0, maxChars - 80).trim()}\n\n…(digest truncated)`;
-  out += `\n\n_(Full TDD is longer — use read_file on the path for complete §B numbers/rules. Do not re-dump the whole TDD into chat.)_`;
+  out += `\n\n_(Titles only above — the quantified §B rules are NOT here. Use read_file for the section map, then read_section per mechanic. Do not re-dump the whole TDD into chat.)_`;
   return out;
 }
 
@@ -114,6 +124,7 @@ export function buildGenerateFinalPrompt({
   pack,
   tddRelPath,
   runtime = "llm",
+  runtimeIndex = "",
   verbose = false,
 }) {
   const genreBrief = buildGenreBrief(tddText);
@@ -126,8 +137,6 @@ export function buildGenerateFinalPrompt({
       pack.quality,
       "",
       pack.verticalSlice,
-      "",
-      pack.presentation,
       "",
       pack.genreLoop,
       "",
@@ -150,19 +159,26 @@ export function buildGenerateFinalPrompt({
     "",
     GENERATE_COMPACT_CONTRACTS,
     "",
+    runtimeIndex,
+    "",
     genreBrief,
     "",
     `## Active TDD slug: ${slug}`,
     `Path: ${tddPath}`,
     "",
     "## First actions (quota-aware)",
-    "1. read_file the TDD path once for §B / §3 / art / input numbers you need — then **write** `main.js`, `hud.js`, `juice.js` immediately.",
-    "2. Do **not** read every file under `public/runtime/` — import kits; truncated runtime reads are intentional.",
-    "3. Do not paste AGENTS.md or prompt packs into tools; contracts above are enough.",
+    "1. `read_file` the TDD path once — you get a **section map**, not the whole doc.",
+    "2. `read_section` **every** `Mechanic: …` block the core loop needs, plus art/atmosphere and input sections. The digest below only lists titles; the quantified rules live in those sections.",
+    "3. Then **write** `main.js`, `hud.js`, `juice.js` and the mechanic modules.",
+    "4. Never open files under `public/runtime/` — the API index above is the full contract; import and use it as written.",
+    "5. Do not re-read anything you already read this run, and do not paste AGENTS.md or prompt packs into tools.",
+    "6. Trust the kits: no defensive wrappers, feature-detection, or re-implementations of HudKit/JuiceKit APIs.",
     "",
     "## TDD digest",
     summarizeTddForPrompt(tddText),
-  ].join("\n");
+  ]
+    .filter((s) => s !== "")
+    .join("\n");
 }
 
 /** Nudge the model to stay in one language when the TDD/gameplay are English. */
@@ -199,13 +215,16 @@ export function buildChatPrompt({
   mode = "agent",
   /** Cursor SDK already has cwd tools — keep prompts short to avoid key-exchange / transport failures. */
   runtime = "llm",
+  runtimeIndex = "",
 }) {
   const ask = mode === "ask";
   const plan = mode === "plan";
   const lang = replyLanguageDirective(message);
+  void tddText;
   const scopeBlock = gameplayContext
     ? `\n${gameplayContext}\n`
     : "\n## Playable scope\nStay in `public/gameplay/**`. Do not scan the rest of the lab.\n";
+  const kitBlock = runtimeIndex ? `\n${runtimeIndex}\n` : "";
 
   if (ask || plan) {
     const chatRules = plan ? pack.chatPlan : pack.chatAsk;
@@ -217,6 +236,7 @@ export function buildChatPrompt({
         : `## Mode: ASK (read-only)\nDo not write or modify any files. TDD slug: ${slug}.\nRead gameplay/TDD only as needed to answer. Match reply length to the question.`,
       lang,
       scopeBlock,
+      kitBlock,
       adviceDigest
         ? `\n## Soft playability notes (only if relevant)\n${adviceDigest}\n`
         : "",
@@ -234,10 +254,12 @@ export function buildChatPrompt({
       `TDD slug: ${slug}. Prefer reading docs/tdds/${slug}/TDD.md and public/gameplay/** yourself.`,
       "Write only under public/gameplay/**. Do not edit public/runtime/**, public/app.js, server/**, or AGENTS.md.",
       "Keep mount/unmount, HudKit/JuiceKit, full loop (win/lose/restart), graybox primitives.",
-      "If TDD defines fog/grain/vignette/palette/atmosphere, raise look with PresentationKit.",
+      "Theme HudKit from TDD mood (`arcade`/`party` vs `liminal`/`muted`/`stealth` or `themeFromPalette`).",
+      "Never open files under public/runtime/ — the API index below is the contract; import and trust it.",
       "Match the user language. Keep the reply short after edits.",
       lang,
       scopeBlock,
+      kitBlock,
       adviceDigest
         ? `\n## Soft playability notes (fix if relevant)\n${adviceDigest}\n`
         : "",
@@ -255,11 +277,14 @@ export function buildChatPrompt({
     "## Mode: AGENT (edit gameplay)",
     `TDD slug: ${slug} (TDD file is read-only this turn).`,
     "Write only `public/gameplay/**`. Keep mount/unmount, HudKit, JuiceKit, full loop, graybox.",
-    "If TDD defines fog/grain/vignette/palette/atmosphere, use PresentationKit.",
+    "Theme HudKit from TDD mood (`arcade`/`party` vs `liminal`/`muted`/`stealth` or `themeFromPalette`).",
     "Do not edit `public/runtime/**`, lab UI, `server/**`, or `AGENTS.md`.",
-    "If you need TDD numbers/rules, read `docs/tdds/<slug>/TDD.md` with tools — do not wait for a pasted dump.",
+    "Never read `public/runtime/**` — the API index below is the contract; import and trust it (no defensive wrappers).",
+    "Open only the gameplay modules the request touches; do not re-read a file you already read this run.",
+    "If you need TDD numbers/rules, `read_file` the TDD for its section map, then `read_section` only the block you need.",
     lang,
     scopeBlock,
+    kitBlock,
     adviceDigest
       ? `\n## Soft playability notes from last check (fix if the user is addressing them)\n${adviceDigest}\n`
       : "",

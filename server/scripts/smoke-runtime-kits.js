@@ -15,7 +15,7 @@ function fail(msg) {
   errors.push(msg);
 }
 
-const kits = ["HudKit.js", "JuiceKit.js", "PathKit.js", "MinimapKit.js", "PresentationKit.js"];
+const kits = ["HudKit.js", "JuiceKit.js", "PathKit.js", "MinimapKit.js"];
 for (const name of kits) {
   try {
     const body = await fs.readFile(path.join(RUNTIME, name), "utf8");
@@ -30,13 +30,6 @@ const pathBody = await fs.readFile(path.join(RUNTIME, "PathKit.js"), "utf8").cat
 if (/export\s+function\s+createPath/.test(pathBody)) ok("PathKit exports createPath");
 else fail("PathKit missing createPath export");
 
-const presentationBody = await fs
-  .readFile(path.join(RUNTIME, "PresentationKit.js"), "utf8")
-  .catch(() => "");
-if (/export\s+function\s+createPresentation/.test(presentationBody)) {
-  ok("PresentationKit exports createPresentation");
-} else fail("PresentationKit missing createPresentation export");
-
 const hudBody = await fs.readFile(path.join(RUNTIME, "HudKit.js"), "utf8").catch(() => "");
 if (/export\s+function\s+createHud/.test(hudBody) && /export\s+const\s+HUD_THEMES/.test(hudBody)) {
   ok("HudKit exports createHud + HUD_THEMES");
@@ -50,20 +43,10 @@ else fail("HudKit missing CSS theme vars");
 const verticalSlice = path.join(ROOT, "server", "agent", "prompts", "vertical-slice.md");
 try {
   const text = await fs.readFile(verticalSlice, "utf8");
-  if (/HudKit/.test(text) && /JuiceKit/.test(text) && /PresentationKit/.test(text)) {
-    ok("vertical-slice.md prompt");
-  } else fail("vertical-slice.md missing kit refs");
+  if (/HudKit/.test(text) && /JuiceKit/.test(text)) ok("vertical-slice.md prompt");
+  else fail("vertical-slice.md missing kit refs");
 } catch {
   fail("vertical-slice.md missing");
-}
-
-const presentationPrompt = path.join(ROOT, "server", "agent", "prompts", "presentation.md");
-try {
-  const text = await fs.readFile(presentationPrompt, "utf8");
-  if (/PresentationKit|createPresentation/.test(text)) ok("presentation.md prompt");
-  else fail("presentation.md missing PresentationKit refs");
-} catch {
-  fail("presentation.md missing");
 }
 
 if (errors.length) {

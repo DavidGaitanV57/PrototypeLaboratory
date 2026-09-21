@@ -1,36 +1,24 @@
 /**
- * Export a standalone playable build — not the lab UI.
+ * Export a portable playable — double-click index.html, no Node server.
+ *
+ * The lab itself stays modular (public/gameplay + public/runtime). Export
+ * bundles that graph (plus Three.js) into a single classic play.js so browsers
+ * accept file:// opens.
  *
  * Destination defaults to `<ROOT>/exports/<slug>-<timestamp>`. Contents:
- *   - index.html + play.css + play.js (full-bleed player shell)
- *   - vendor/three/build
- *   - runtime/ (Engine, SceneKit, Input, …)
- *   - gameplay/ (generated prototype)
- *   - tdd/ (TDD.md + version snapshots)
+ *   - index.html + play.css + play.js (self-contained)
+ *   - tdd/ (optional TDD copies)
+ *   - README.md + EXPORT.json
  */
 
 import fs from "node:fs/promises";
 import path from "node:path";
+import * as esbuild from "esbuild";
 import {
   assertSafeSlug,
   isInsideDir,
   resolveExportDestination,
 } from "./security/paths.js";
-
-const SKIP_DIR_NAMES = new Set(["node_modules"]);
-
-async function copyDir(srcDir, dstDir) {
-  const entries = await fs.readdir(srcDir, { withFileTypes: true });
-  await fs.mkdir(dstDir, { recursive: true });
-  for (const entry of entries) {
-    if (entry.name.startsWith(".") && entry.name !== ".gitkeep") continue;
-    if (SKIP_DIR_NAMES.has(entry.name)) continue;
-    const src = path.join(srcDir, entry.name);
-    const dst = path.join(dstDir, entry.name);
-    if (entry.isDirectory()) await copyDir(src, dst);
-    else if (entry.isFile()) await fs.copyFile(src, dst);
-  }
-}
 
 async function safeCopyFile(src, dst) {
   try {
@@ -101,138 +89,117 @@ function playerHtml({ title }) {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>${title}</title>
-    <link rel="stylesheet" href="/play.css" />
+    <link rel="stylesheet" href="./play.css" />
   </head>
   <body>
     <div id="play">
       <canvas id="game" tabindex="0" aria-label="Game"></canvas>
       <div id="hudLayer" class="hud-layer" data-play-hud="overlay"></div>
     </div>
-    <script type="module" src="/play.js"></script>
+    <script src="./play.js"></script>
   </body>
 </html>
-`;
-}
-
-function playerJs() {
-  return `import { mount } from "/gameplay/main.js";
-
-const canvas = document.getElementById("game");
-const hudRoot = document.getElementById("hudLayer");
-if (hudRoot) hudRoot.dataset.playHud = "overlay";
-
-try {
-  await mount(canvas, { hudRoot });
-  canvas?.focus?.();
-} catch (err) {
-  console.error("[play] mount failed", err);
-  const msg = document.createElement("p");
-  msg.textContent = err?.message || "Failed to start the prototype.";
-  Object.assign(msg.style, {
-    position: "absolute",
-    left: "16px",
-    top: "16px",
-    color: "#f2f0eb",
-    zIndex: "9",
-  });
-  document.getElementById("play")?.appendChild(msg);
-}
-`;
-}
-
-function playerServerSource() {
-  return `import http from "node:http";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const root = path.dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.PORT || 8080);
-const HOST = process.env.HOST || "127.0.0.1";
-const TYPES = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".md": "text/markdown; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".ico": "image/x-icon",
-  ".wasm": "application/wasm",
-};
-
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url || "/", \`http://\${req.headers.host || "127.0.0.1"}\`);
-  let rel = decodeURIComponent(url.pathname);
-  if (rel === "/") rel = "/index.html";
-  if (rel.includes("\\0")) {
-    res.writeHead(400);
-    res.end("Bad request");
-    return;
-  }
-  const rootAbs = path.resolve(root);
-  const file = path.resolve(rootAbs, "." + rel.replace(/\\\\/g, "/"));
-  if (file !== rootAbs && !file.startsWith(rootAbs + path.sep)) {
-    res.writeHead(403);
-    res.end("Forbidden");
-    return;
-  }
-  fs.readFile(file, (err, data) => {
-    if (err) {
-      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-      res.end("Not found");
-      return;
-    }
-    res.writeHead(200, { "Content-Type": TYPES[path.extname(file)] || "application/octet-stream" });
-    res.end(data);
-  });
-});
-
-server.listen(PORT, HOST, () => {
-  console.log(\`Playable prototype → http://\${HOST}:\${PORT}/\`);
-});
 `;
 }
 
 function readmeText({ slug }) {
   return `# ${slug} — playable prototype
 
-This folder is the game, not Prototype Laboratory.
+This folder is the game only (not Prototype Laboratory).
 
-From **this folder** run:
+## Play
 
-\`\`\`
-node server.mjs
-\`\`\`
+Double-click \`index.html\` (Chrome / Edge / Firefox).
 
-Then open http://127.0.0.1:8080/
+No install and no \`node server.mjs\` — everything is bundled into \`play.js\`.
 
-Do not open index.html via file:// — the browser will block module loads.
-Do not run the command from the lab root; \`cd\` into this export first.
+Keep \`index.html\`, \`play.css\`, and \`play.js\` together in the same folder.
 `;
 }
 
-const THREE_BUILD_FILES = ["three.module.js", "three.core.js"];
+function exportEntrySource() {
+  return `import { mount } from "./gameplay/main.js";
 
-async function copyThreeBuild({ dest, root }) {
-  const out = path.join(dest, "vendor", "three", "build");
-  await fs.mkdir(out, { recursive: true });
-  const sources = [
+const canvas = document.getElementById("game");
+const hudRoot = document.getElementById("hudLayer");
+if (hudRoot) hudRoot.dataset.playHud = "overlay";
+
+mount(canvas, { hudRoot })
+  .then(() => {
+    canvas?.focus?.();
+  })
+  .catch((err) => {
+    console.error("[play] mount failed", err);
+    const msg = document.createElement("p");
+    msg.textContent = err?.message || "Failed to start the prototype.";
+    Object.assign(msg.style, {
+      position: "absolute",
+      left: "16px",
+      top: "16px",
+      color: "#f2f0eb",
+      zIndex: "9",
+    });
+    document.getElementById("play")?.appendChild(msg);
+  });
+`;
+}
+
+/**
+ * Resolve lab absolute imports (/runtime/…, /vendor/three/…) for the bundle.
+ */
+function labPathPlugin({ publicRoot, root }) {
+  const threeCandidates = [
     path.join(root, "node_modules", "three", "build"),
-    path.join(root, "public", "vendor", "three", "build"),
+    path.join(publicRoot, "vendor", "three", "build"),
   ];
-  const missing = [];
-  for (const name of THREE_BUILD_FILES) {
-    let ok = false;
-    for (const dir of sources) {
-      if (await safeCopyFile(path.join(dir, name), path.join(out, name))) {
-        ok = true;
-        break;
-      }
-    }
-    if (!ok) missing.push(name);
-  }
-  return missing;
+
+  return {
+    name: "plab-lab-paths",
+    setup(build) {
+      build.onResolve({ filter: /^\/runtime\// }, (args) => ({
+        path: path.join(publicRoot, args.path.replace(/^\//, "")),
+      }));
+
+      build.onResolve({ filter: /^\/vendor\/three\// }, async (args) => {
+        const base = path.basename(args.path);
+        for (const dir of threeCandidates) {
+          const candidate = path.join(dir, base);
+          try {
+            await fs.access(candidate);
+            return { path: candidate };
+          } catch {
+            /* try next */
+          }
+        }
+        return {
+          errors: [{ text: `Three.js file not found: ${base} (npm install in the lab)` }],
+        };
+      });
+    },
+  };
+}
+
+async function bundlePlayable({ publicRoot, root, outfile }) {
+  const result = await esbuild.build({
+    absWorkingDir: publicRoot,
+    stdin: {
+      contents: exportEntrySource(),
+      resolveDir: publicRoot,
+      sourcefile: "export-entry.js",
+      loader: "js",
+    },
+    bundle: true,
+    format: "iife",
+    platform: "browser",
+    target: ["es2020"],
+    outfile,
+    write: true,
+    logLevel: "silent",
+    plugins: [labPathPlugin({ publicRoot, root })],
+    // Keep CSS-in-JS / unexpected loaders from surprising us
+    loader: { ".js": "js", ".mjs": "js", ".json": "json" },
+  });
+  return result;
 }
 
 /**
@@ -269,7 +236,6 @@ export async function exportBuild({
     dest = resolved.dest;
   }
 
-  // Extra belt: never write into public/, server/, or docs/ via export
   const rootAbs = path.resolve(root);
   if (!allowOutsideExports) {
     for (const blocked of ["public", "server", "docs", "node_modules"]) {
@@ -295,20 +261,18 @@ export async function exportBuild({
   const title = cleanSlug.replace(/[-_]+/g, " ").trim() || "Prototype";
   await fs.writeFile(path.join(dest, "index.html"), playerHtml({ title }), "utf8");
   await fs.writeFile(path.join(dest, "play.css"), playerCss(), "utf8");
-  await fs.writeFile(path.join(dest, "play.js"), playerJs(), "utf8");
-  await fs.writeFile(path.join(dest, "server.mjs"), playerServerSource(), "utf8");
   await fs.writeFile(path.join(dest, "README.md"), readmeText({ slug: cleanSlug }), "utf8");
 
-  const missingThree = await copyThreeBuild({ dest, root });
-  if (missingThree.length) {
-    return {
-      ok: false,
-      reason: `Missing Three.js files (${missingThree.join(", ")}). Run npm install in the lab, then export again.`,
-    };
+  try {
+    await bundlePlayable({
+      publicRoot,
+      root,
+      outfile: path.join(dest, "play.js"),
+    });
+  } catch (err) {
+    const detail = err?.errors?.map((e) => e.text).filter(Boolean).join("; ") || err?.message || String(err);
+    return { ok: false, reason: `Bundle failed: ${detail}` };
   }
-
-  await copyDir(path.join(publicRoot, "runtime"), path.join(dest, "runtime"));
-  await copyDir(path.join(publicRoot, "gameplay"), path.join(dest, "gameplay"));
 
   const tddDir = path.join(tddsRoot, cleanSlug);
   const tddOutDir = path.join(dest, "tdd");
@@ -327,14 +291,14 @@ export async function exportBuild({
   const filesCopied = await countFiles(dest);
   const manifest = {
     slug: cleanSlug,
-    kind: "playable",
+    kind: "playable-portable",
     exportedAt: new Date().toISOString(),
     filesCopied,
     destination: dest,
-    entry: "gameplay/main.js",
-    serve: "From this folder run: node server.mjs  →  http://127.0.0.1:8080/",
+    entry: "play.js",
+    open: "Double-click index.html (no server)",
   };
   await fs.writeFile(path.join(dest, "EXPORT.json"), JSON.stringify(manifest, null, 2), "utf8");
 
-  return { ok: true, destination: dest, filesCopied, kind: "playable" };
+  return { ok: true, destination: dest, filesCopied, kind: "playable-portable" };
 }

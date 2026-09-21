@@ -13,8 +13,8 @@ description: >-
 - Write only `public/gameplay/**`. Never edit `public/runtime/**`, lab UI, or `server/`.
 - Entry: `public/gameplay/main.js` with `export async function mount(canvas, { hudRoot })` and `unmount()`.
 - **Required modules:** `hud.js` (HudKit), `juice.js` (JuiceKit), plus mechanic modules as needed.
-- Import helpers from `/runtime/*.js` (Engine, SceneKit, Input, EventBus, Primitives, CameraRig, **HudKit, JuiceKit, PathKit, MinimapKit, PresentationKit**).
-- Graybox meshes: primitives + matte colors. Raise **look** when the TDD defines fog/grain/vignette/palette/atmosphere via PresentationKit. **Theme HudKit** the same way (`arcade`/`party` vs `liminal`/`muted`/`stealth`, or `themeFromPalette`) — layout stays identical. Items = mesh + short label/emoji — no remote image URLs unless asked.
+- Import helpers from `/runtime/*.js` (Engine, SceneKit, Input, EventBus, Primitives, CameraRig, **HudKit, JuiceKit, PathKit, MinimapKit**). The lab injects a Runtime API index — **never read runtime sources** and never add defensive wrappers around kit calls.
+- Graybox meshes: primitives + matte colors. **Theme HudKit** from TDD mood (`arcade`/`party` vs `liminal`/`muted`/`stealth`, or `themeFromPalette`) — layout stays identical. Items = mesh + short label/emoji — no remote image URLs unless asked.
 - Keep game HUD off the **bottom-right** (lab chrome lives there). Prefer returning `{ sceneKit }` from `mount`.
 
 ## Build the loop from the TDD
@@ -48,8 +48,7 @@ description: >-
 ## Quality bar (vertical slice)
 
 Readable fantasy in &lt;3s, full loop, delta-time movement, **HudKit live HUD**, **JuiceKit feedback**, world landmarks.  
-When the TDD locks art/atmosphere, match fog/overlays/palette (PresentationKit) — still no empty grid alone.  
-Fail: lone cube on empty plane; static HUD; HUD listing filenames; no juice on events; TDD fog/grain ignored.
+Fail: lone cube on empty plane; static HUD; HUD listing filenames; no juice on events.
 
 ## Chat iteration
 

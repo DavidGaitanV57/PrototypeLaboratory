@@ -31,7 +31,9 @@ export async function unmount() { ... }
 
 Entry for a generated build: `public/gameplay/main.js`.
 
-Import runtime helpers from `/runtime/*.js` (Engine, SceneKit, Input, EventBus, Primitives, CameraRig, **HudKit, JuiceKit, PathKit, MinimapKit, PresentationKit**). Do not rewrite the runtime.
+Import runtime helpers from `/runtime/*.js` (Engine, SceneKit, Input, EventBus, Primitives, CameraRig, **HudKit, JuiceKit, PathKit, MinimapKit**). Do not rewrite the runtime.
+
+The lab injects a **Runtime API index** (signatures + returned surface) into Generate Final and Chat. Trust it: do not read runtime sources, and do not wrap kit calls in feature detection — `read_file` on `public/runtime/**` returns that digest, not the source.
 
 When the TDD names Unity systems (NavMesh, NavMeshAgent, Rigidbody, UI Toolkit), implement web equivalents **only in gameplay code**. Do not rewrite those names in the TDD.
 
@@ -40,7 +42,7 @@ When the TDD names Unity systems (NavMesh, NavMeshAgent, Rigidbody, UI Toolkit),
 
 ## Playable quality bar (reference-grade mechanics, graybox art)
 
-Generated prototypes must feel like **playable vertical slices** — short games that are fun for 1–2 minutes — using **primitives or compositions of primitives** (boxes, capsules, cylinders, spheres, planes). No remote textures/PBR/glTF required for the core loop. Raise **look** when the TDD defines art/atmosphere (fog, grain, vignette, VHS, palette) via **PresentationKit** — still graybox meshes.
+Generated prototypes must feel like **playable vertical slices** — short games that are fun for 1–2 minutes — using **primitives or compositions of primitives** (boxes, capsules, cylinders, spheres, planes). No remote textures/PBR/glTF required for the core loop. Graybox meshes stay matte; match TDD mood with lights and materials, and **theme HudKit** (`arcade` default; `liminal`/`muted`/`stealth` or `themeFromPalette`) when the TDD asks for quiet or loud chrome.
 
 Required:
 
@@ -51,9 +53,8 @@ Required:
 5. **`juice.js`** with **JuiceKit** — shake, flash, or hit-stop on meaningful events.
 6. NPCs/props when the TDD implies them — distinct meshes, updated every frame.
 7. Genre-appropriate camera and world landmarks (not empty grid alone).
-8. **Presentation ceiling** — when the TDD locks atmosphere/palette/post, match it with PresentationKit + lights (procedural canvas textures OK); otherwise stay minimum graybox.
 
-Fail examples: lone blue cube on empty plane; mechanics with no win/lose; HUD listing file names; TDD fog/grain ignored for a flat default SceneKit look.
+Fail examples: lone blue cube on empty plane; mechanics with no win/lose; HUD listing file names.
 
 ## Soft playability advice (never blocks delivery)
 

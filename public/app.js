@@ -2377,7 +2377,7 @@ async function runExportBuild() {
     setWorkStatus(`Exported · ${result.filesCopied} files`);
     appendWorkLog(`copied ${result.filesCopied} files`);
     appendWorkLog(result.destination);
-    appendWorkLog("cd into that folder → node server.mjs → http://127.0.0.1:8080/");
+    appendWorkLog("Open that folder → double-click index.html (no server needed)");
     setTimeout(hideWorkOverlay, 2200);
   } catch (err) {
     appendWorkLog(String(err.message || err));

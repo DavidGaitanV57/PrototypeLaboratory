@@ -5,7 +5,6 @@ import {
   buildGenreBrief,
   formatAdviceForChat,
   inferGenreHints,
-  tddAsksPresentation,
   tddAsksQuietHud,
 } from "../agent/playabilityAdvisor.js";
 
@@ -41,17 +40,6 @@ const brief = buildGenreBrief(kartTdd);
 if (/lap increment|PathKit track/i.test(brief)) ok("buildGenreBrief includes kart contract");
 else fail("genre brief missing kart contract");
 
-const fogTdd =
-  "AtmosphereDirector: linear fog near 8 far 42, grain 0.18, vignette, master palette #C9B45A";
-if (tddAsksPresentation(fogTdd)) ok("tddAsksPresentation fog/grain");
-else fail("expected presentation signal");
-if (!tddAsksPresentation(kartTdd)) ok("plain kart TDD does not force presentation");
-else fail("plain kart should not ask presentation");
-
-const fogBrief = buildGenreBrief(fogTdd + "\n" + kartTdd);
-if (/presentation:|PresentationKit/i.test(fogBrief)) ok("buildGenreBrief includes presentation contract");
-else fail("genre brief missing presentation when TDD asks");
-
 const quietTdd =
   "Liminal horror. HUD almost invisible. Atmosphere is the primary product. Sanity vignette.";
 if (tddAsksQuietHud(quietTdd)) ok("tddAsksQuietHud liminal");
@@ -72,7 +60,6 @@ else ok(`advice entries: ${report.advice.length}`);
 const digest = formatAdviceForChat(report.advice);
 ok(digest ? `digest length ${digest.length}` : "digest empty or soft-ok");
 
-// Advisor must not throw on empty gameplay either
 const emptyReport = await advisePlayability({
   root: path.join(ROOT, "does-not-exist-lab-root-for-advisor"),
   tddText: "collect 5 coins in 60 seconds",

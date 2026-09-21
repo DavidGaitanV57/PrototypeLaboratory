@@ -111,7 +111,7 @@ export function inferGenreHints(tddText = "") {
     hints.push({
       genre: "kart",
       brief:
-        "Kart/race loop: PathKit track + lap increment on finish; race Finishes at totalLaps; HudKit lap/pos/speed; MinimapKit optional; JuiceKit on drift/boost; PresentationKit curb/trails if TDD art asks; restart R.",
+        "Kart/race loop: PathKit track + lap increment on finish; race Finishes at totalLaps; HudKit lap/pos/speed; MinimapKit optional; JuiceKit on drift/boost; restart R.",
     });
   }
   if (collector) {
@@ -132,17 +132,10 @@ export function inferGenreHints(tddText = "") {
     hints.push({
       genre: "generic",
       brief:
-        "Generic loop: start → core verb → win/lose or round → restart; live HUD; graybox primitives; raise look with PresentationKit only if TDD defines atmosphere/palette.",
+        "Generic loop: start → core verb → win/lose or round → restart; live HUD; graybox primitives.",
     });
   }
   return hints;
-}
-
-/** TDD signals that raise the presentation ceiling (soft advisory). */
-export function tddAsksPresentation(tddText = "") {
-  return /\b(fog|grain|vignette|vhs|atmosphere|atmosphere\s*director|color\s*grade|master\s*palette|art\s*direction|post[\s-]?process|ur\s*volume|volume\s+profile|kelvin|fluorescent|curb\s*stripe)\b/i.test(
-    String(tddText),
-  );
 }
 
 /** Quiet / horror HUD — prefer liminal/muted HudKit theme over loud arcade chrome. */
@@ -158,11 +151,6 @@ export function buildGenreBrief(tddText = "") {
     "## Inferred loop brief (from TDD — follow these contracts)",
     ...hints.map((h) => `- **${h.genre}:** ${h.brief}`),
   ];
-  if (tddAsksPresentation(tddText)) {
-    lines.push(
-      "- **presentation:** TDD defines atmosphere/palette/post — match fog/overlays/palette via PresentationKit; meshes stay primitives.",
-    );
-  }
   if (tddAsksQuietHud(tddText)) {
     lines.push(
       "- **hud-theme:** TDD implies quiet/horror UI — HudKit `theme: \"liminal\"` or `themeFromPalette({ accent })`; keep layout, tone down arcade chrome.",
@@ -338,31 +326,14 @@ export async function advisePlayability({ root, tddText = "" }) {
     }
   }
 
-  // Presentation license — soft nudge only
   if (/https?:\/\/.+\.(png|jpg|jpeg|webp|gif)/i.test(src) || /new\s+Image\s*\(/.test(src)) {
     advice.push({
       id: "remote-art",
       severity: "info",
       message:
-        "Gameplay references image URLs or Image() — prefer graybox primitives, procedural canvas textures, or PresentationKit overlays.",
-      chatHint: "Replace remote images with colored primitives, CanvasTexture, or PresentationKit (no remote art URLs)",
+        "Gameplay references image URLs or Image() — prefer graybox primitives or procedural canvas textures.",
+      chatHint: "Replace remote images with colored primitives or CanvasTexture (no remote art URLs)",
     });
-  }
-
-  if (tddAsksPresentation(tddText) && bundle.hasMain) {
-    const hasLook =
-      /PresentationKit|createPresentation|applyFog|scene\.fog\s*=/.test(src) ||
-      /setGrain|setVignette|setVhs|setWash/.test(src);
-    if (!hasLook) {
-      advice.push({
-        id: "presentation-ceiling",
-        severity: "info",
-        message:
-          "TDD implies atmosphere/fog/post/palette — soft check: no PresentationKit / fog found in gameplay.",
-        chatHint:
-          "Import createPresentation from /runtime/PresentationKit.js; applyFog + grain/vignette/wash to match TDD numbers",
-      });
-    }
   }
 
   if (tddAsksQuietHud(tddText) && bundle.hasMain && /createHud/.test(src)) {

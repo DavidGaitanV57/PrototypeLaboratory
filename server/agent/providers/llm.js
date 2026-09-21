@@ -7,6 +7,8 @@ import {
   resolveWithinRoot,
 } from "../../security/paths.js";
 import { createRunMeter } from "../runMeter.js";
+import { runtimeFileDigest } from "../runtimeIndex.js";
+import { buildTddBrief, extractTddSection } from "../tddIndex.js";
 
 /** Per-request hang limit — then retry (does not end the run). */
 const TURN_FETCH_TIMEOUT_MS = 12 * 60 * 1000;
@@ -92,24 +94,29 @@ function wantsResponsesApi(detail) {
   return /\/v1\/responses/i.test(text) || (/function tools/i.test(text) && /reasoning_effort/i.test(text));
 }
 
-/**
- * Cap tool read payloads so multi-turn Generate Final does not re-send huge runtime/TDD dumps.
- * Runtime sources are intentionally tiny — agents should import kits, not paste APIs.
- */
+/** Docs get a section map (see tddIndex); everything else is capped here. */
+const TDD_BRIEF_THRESHOLD = 18_000;
+const SECTION_MAX = 20_000;
+
 function truncateToolRead(rel, body) {
   const text = String(body ?? "");
   const norm = String(rel || "").replace(/\\/g, "/");
   let max = 48_000;
-  if (/^public\/runtime\//i.test(norm)) max = 6_000;
-  else if (/^docs\/tdds\//i.test(norm)) max = 28_000;
-  else if (/AGENTS\.md$/i.test(norm) || /^server\/agent\/prompts\//i.test(norm)) max = 4_000;
+  if (/AGENTS\.md$/i.test(norm) || /^server\/agent\/prompts\//i.test(norm)) max = 4_000;
   if (text.length <= max) return text;
   return (
     `${text.slice(0, max)}\n\n` +
     `…(truncated ${text.length - max} chars from ${norm}; ` +
-    `for runtime kits prefer import from /runtime/*.js — do not re-read full sources. ` +
-    `For TDD, re-read only if you still need a specific section.)`
+    `re-read only if you still need a specific section.)`
   );
+}
+
+function isRuntimeRel(rel) {
+  return /^public\/runtime\/[^/]+\.js$/i.test(String(rel || "").replace(/\\/g, "/"));
+}
+
+function isDocRel(rel) {
+  return /^docs\/.+\.md$/i.test(String(rel || "").replace(/\\/g, "/"));
 }
 
 function chatToolsToResponses(tools) {
@@ -374,6 +381,8 @@ export function createLlmProvider({
   const ctrl = { current: null };
   /** @type {{ messages: object[], turn: number, writeMode: string, model: string, at: number } | null} */
   let checkpoint = null;
+  /** Content already delivered this run — repeat reads return a pointer, not the bytes. */
+  const servedReads = new Map();
 
   const readTools = [
     {
@@ -392,11 +401,28 @@ export function createLlmProvider({
       type: "function",
       function: {
         name: "read_file",
-        description: "Read a UTF-8 text file relative to project root",
+        description:
+          "Read a UTF-8 text file relative to project root. public/runtime/ files return a compact API digest (import the kit; the source is never needed). Long docs (the TDD) return a section map plus the opening — use read_section for the rest.",
         parameters: {
           type: "object",
           properties: { path: { type: "string" } },
           required: ["path"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "read_section",
+        description:
+          "Read one section of a markdown doc by heading (e.g. 'Mechanic: Sanity System', '11.3 Input map', 'Art Direction'). Use after read_file returns a section map.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string" },
+            section: { type: "string", description: "Heading text from the section map" },
+          },
+          required: ["path", "section"],
         },
       },
     },
@@ -425,20 +451,60 @@ export function createLlmProvider({
     if (name === "list_dir") {
       if (isSensitiveRel(rel)) throw new Error("Access denied");
       const ents = await fs.readdir(abs, { withFileTypes: true });
-      return ents
+      const listing = ents
         .filter((e) => !isSensitiveRel(`${rel}/${e.name}`))
         .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
         .join("\n");
+      if (/^public\/runtime\/?$/i.test(rel)) {
+        return `${listing}\n\n(Do not read these — the Runtime API index in your instructions is the full contract.)`;
+      }
+      return listing;
     }
     if (name === "read_file") {
       if (isSensitiveRel(rel)) throw new Error("Access denied to sensitive file");
+      if (servedReads.has(rel)) {
+        return `(already provided earlier this run: ${rel} — reuse it from the conversation above instead of re-reading. ${servedReads.get(rel)})`;
+      }
+      if (isRuntimeRel(rel)) {
+        const digest = await runtimeFileDigest(root, rel);
+        if (digest) {
+          servedReads.set(rel, "API digest was returned.");
+          return `${digest}\n\n(Runtime sources are not served — import the module and use the exports above.)`;
+        }
+      }
       const body = await fs.readFile(abs, "utf8");
+      if (isDocRel(rel) && body.length > TDD_BRIEF_THRESHOLD) {
+        servedReads.set(rel, "Section map was returned; use read_section for specific blocks.");
+        return buildTddBrief(rel, body);
+      }
+      servedReads.set(rel, `${body.length} chars.`);
       return truncateToolRead(rel, body);
+    }
+    if (name === "read_section") {
+      if (isSensitiveRel(rel)) throw new Error("Access denied to sensitive file");
+      const wanted = String(args.section || "").trim();
+      if (!wanted) throw new Error("read_section requires a section heading");
+      const key = `${rel}#${wanted.toLowerCase()}`;
+      if (servedReads.has(key)) {
+        return `(already provided earlier this run: ${wanted} — reuse it from the conversation above.)`;
+      }
+      const body = await fs.readFile(abs, "utf8");
+      const found = extractTddSection(body, wanted);
+      if (!found) {
+        return `No section matched "${wanted}" in ${rel}. Call read_file on it again for the section map.`;
+      }
+      servedReads.set(key, "section delivered");
+      const content =
+        found.content.length > SECTION_MAX
+          ? `${found.content.slice(0, SECTION_MAX)}\n\n…(section truncated)`
+          : found.content;
+      return content;
     }
     if (name === "write_file") {
       assertAgentWriteAllowed(rel, writeMode, { slug });
       await fs.mkdir(path.dirname(abs), { recursive: true });
       await fs.writeFile(abs, args.content ?? "", "utf8");
+      servedReads.delete(rel);
       return `Wrote ${rel}`;
     }
     throw new Error(`Unknown tool ${name}`);

@@ -2,7 +2,7 @@
 
 You are building a **playable vertical slice** — a short game that feels fun in the first minute, not a debug sandbox.
 
-Graybox art only (primitives + matte colors by default). **Presentation is part of the product**, same as mechanics — raise look when the TDD defines art/atmosphere (see presentation ceiling).
+Graybox art only (primitives + matte colors by default). Theme HudKit from TDD mood; match palette with materials and lights when the TDD defines them.
 
 ## Required modules (every Generate Final)
 
@@ -16,7 +16,6 @@ Optional when the TDD implies them:
 
 - `/runtime/PathKit.js` — splines, lap progress, patrol paths (race, lanes, circuits)
 - `/runtime/MinimapKit.js` — 2D minimap inside a HudKit panel (race, stealth, open world)
-- `/runtime/PresentationKit.js` — fog, grain, vignette, VHS, wash, curb stripes, trails (when TDD art/atmosphere asks)
 
 ## HudKit quick start
 
@@ -66,7 +65,7 @@ const juice = createJuice({ camera, canvas });
 - Build a **readable arena** for the fantasy: spline track, column of platforms, room bounds, wave spawn ring.
 - SceneKit grid is OK as base — **add** landmarks (props, hazards, checkpoints) that communicate roles.
 - NPCs implied by TDD must move/update every frame.
-- If the TDD locks palette / fog / post, raise the presentation ceiling (PresentationKit) — still no empty grid alone.
+- Match TDD palette with materials and lights when given — still no empty grid alone.
 
 ## Fun bar (self-check before stop)
 
@@ -75,6 +74,6 @@ const juice = createJuice({ camera, canvas });
 - [ ] HUD numbers **change** during play?
 - [ ] Win **or** lose + restart without F5?
 - [ ] At least one toast or result overlay on round end?
-- [ ] If TDD lists fog/grain/vignette/VHS/palette — presentation matches?
+- [ ] HudKit theme matches TDD mood when quiet/loud chrome is implied?
 
 Do **not** ship: lone cube on infinite grid, static HUD, module-name debug panels.

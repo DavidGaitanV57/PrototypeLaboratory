@@ -3,10 +3,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  buildChatPrompt,
   buildGenerateFinalPrompt,
   loadPromptPack,
   summarizeTddForPrompt,
 } from "../agent/prompts/index.js";
+import { buildRuntimeApiIndex } from "../agent/runtimeIndex.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const errors = [];
@@ -37,6 +39,9 @@ else fail("digest should shrink large TDDs");
 if (digest.length > 14_000) fail(`digest too large: ${digest.length}`);
 else ok("digest within budget");
 
+const runtimeIndex = await buildRuntimeApiIndex(ROOT);
+const compactIndex = await buildRuntimeApiIndex(ROOT, { compact: true });
+
 const slim = buildGenerateFinalPrompt({
   slug: "ThresholdRooms",
   tddText,
@@ -44,6 +49,7 @@ const slim = buildGenerateFinalPrompt({
   pack,
   tddRelPath: "docs/tdds/ThresholdRooms/TDD_ThresholdRooms.md",
   runtime: "llm",
+  runtimeIndex,
 });
 if (slim.length > 28_000) fail(`slim Generate Final too large: ${slim.length}`);
 else ok(`slim Generate Final ${slim.length} chars`);
@@ -54,6 +60,41 @@ else ok("slim omits full AGENTS.md");
 if (/playable-quality|Vertical slice presentation/i.test(slim) && slim.includes(pack.quality.slice(0, 80))) {
   fail("slim should not paste full quality pack");
 } else ok("slim omits full quality/vertical packs");
+if (/Runtime API index/.test(slim) && /createHud/.test(slim)) ok("slim carries runtime API index");
+else fail("slim missing runtime API index");
+if (/Never open files under `public\/runtime\/`/.test(slim)) ok("slim forbids runtime reads");
+else fail("slim missing runtime read ban");
+if (/no defensive wrappers|no feature detection/i.test(slim)) ok("slim forbids defensive wrappers");
+else fail("slim missing anti-wrapper rule");
+if (/hud\.panel\(/.test(slim) && /panel\.stat\(|\.stat\(/.test(slim)) ok("slim shows nested HudKit usage");
+else fail("slim missing HudKit panel usage");
+if (!/TDD-specific contract|PresentationKit|createPresentation/.test(slim)) ok("slim has no PresentationKit / contract rows");
+else fail("slim still mentions PresentationKit or contract rows");
+
+const chat = buildChatPrompt({
+  slug: "ThresholdRooms",
+  message: "sube la velocidad del jugador",
+  agentsMd,
+  pack,
+  runtimeIndex: compactIndex,
+});
+if (chat.length < 6000) ok(`chat agent prompt ${chat.length} chars`);
+else fail(`chat agent prompt too large: ${chat.length}`);
+if (/Runtime API index/.test(chat)) ok("chat carries compact runtime index");
+else fail("chat missing compact runtime index");
+if (/Never read `public\/runtime\/\*\*`/.test(chat)) ok("chat forbids runtime reads");
+else fail("chat missing runtime read ban");
+
+const ask = buildChatPrompt({
+  slug: "ThresholdRooms",
+  message: "how does the sanity system work?",
+  agentsMd,
+  pack,
+  mode: "ask",
+  runtimeIndex: compactIndex,
+});
+if (/Runtime API index/.test(ask)) ok("ask carries compact runtime index");
+else fail("ask missing compact runtime index");
 
 const fat = buildGenerateFinalPrompt({
   slug: "ThresholdRooms",
@@ -61,6 +102,7 @@ const fat = buildGenerateFinalPrompt({
   agentsMd,
   pack,
   tddRelPath: "docs/tdds/ThresholdRooms/TDD_ThresholdRooms.md",
+  runtimeIndex,
   verbose: true,
 });
 if (fat.length > slim.length * 2) ok(`verbose path still available (${fat.length} chars)`);

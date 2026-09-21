@@ -10,18 +10,17 @@ Build ONE cohesive **vertical slice** playable prototype from the entire TDD.
 4. `mount` must:
    - Use `/runtime/Engine.js` to create renderer/scene/camera/loop.
    - Call SceneKit for sky + ground **and** add genre-appropriate landmarks (track, platforms, arena ring, etc.).
-   - When the TDD defines art direction / atmosphere / fog / grain / vignette / palette, raise look with `/runtime/PresentationKit.js` (and lights matching Kelvin/intensity when given).
-   - Mount HUD via `hud.js` → `/runtime/HudKit.js` into `hudRoot`.
+   - Mount HUD via `hud.js` → `/runtime/HudKit.js` into `hudRoot`. Theme HudKit from TDD mood when implied.
    - Wire `/runtime/JuiceKit.js` from `juice.js` (shake/flash on hits, boosts, lap, win/lose).
    - Implement every production mechanic from §B required for the core loop.
-   - Satisfy playable quality, vertical-slice, genre-loop, and **presentation** contracts.
+   - Satisfy playable quality, vertical-slice, and genre-loop contracts.
 5. Do not edit `public/runtime/**`, lab UI, or the TDD during Generate Final.
 6. Prefer a single cohesive session: one fantasy, one HUD owner, restartable loop.
 
 ## Reading order
 
 1. Active TDD under `docs/tdds/<slug>/` (prefer `TDD.md`, else the primary `.md`) — especially §B `## Mechanic:` / `### Mechanic:` blocks, §3 core loop, §11.3 input, §11.5 camera/control. Use **read_file** on that path; the prompt only includes a short digest.
-2. Compact contracts in this prompt (HudKit / JuiceKit / PresentationKit / loop). Do **not** ask for AGENTS.md or full prompt-pack dumps.
+2. Compact contracts in this prompt (HudKit / JuiceKit / loop). Do **not** ask for AGENTS.md or full prompt-pack dumps.
 3. Runtime: **import** `/runtime/*.js` — do **not** open every runtime source end-to-end.
 
 ## First actions
