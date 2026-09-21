@@ -246,18 +246,21 @@ export async function createSession({ root, tddsRoot, slug }) {
       runMeta = { mode: "agent", op: "generate" };
       try {
         const tdd = await readTdd(tddsRoot, slug);
+        const picked = await pickProvider(root, { writeMode: "generate", slug });
         const prompt = buildGenerateFinalPrompt({
           slug,
           tddText: tdd.text,
           tddRelPath: tdd.relPath,
           agentsMd,
           pack,
+          runtime: picked.kind === "cursor" ? "cursor" : "llm",
         });
         const result = await runProvider(prompt, {
           writeMode: "generate",
           op: "generate",
           mode: "agent",
           onEvent: handlers.onEvent,
+          picked,
         });
         if (result?.status === "cancelled" || result?.resumable) {
           captureCheckpoint(runMeta);

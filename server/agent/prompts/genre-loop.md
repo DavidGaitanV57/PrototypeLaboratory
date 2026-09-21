@@ -56,8 +56,8 @@ Apply when fight / eliminate / survive.
 
 ## Presentation licenses (keep feel, keep graybox)
 
-Allowed: hit flash, stun, boost trails via scaled primitives, particle-ish boxes, emoji/text item icons, HudKit toasts/overlays.  
-Avoid: loading remote images, PBR textures, glTF dependencies for the core loop.
+Allowed: hit flash, stun, boost trails via scaled primitives / PresentationKit trails, curb stripes, particle-ish boxes, emoji/text item icons, HudKit toasts/overlays, fog/grain/vignette/VHS/wash when the TDD asks (PresentationKit).  
+Avoid: loading remote images, PBR texture packs, glTF dependencies for the core loop.
 
 ## Self-check before you stop writing
 
@@ -69,4 +69,5 @@ Answer yes to each that applies — if no, fix code now:
 - [ ] HUD numbers move when state changes (laps, score, ammo…)?
 - [ ] Juice fires on at least one gameplay event?
 - [ ] `hud.js` and `juice.js` exist and are wired from `main.js`?
+- [ ] If TDD lists fog/grain/vignette/palette — presentation matches (PresentationKit)?
 - [ ] Kart only: can the race actually finish via lap count?

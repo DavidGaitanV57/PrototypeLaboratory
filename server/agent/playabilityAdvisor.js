@@ -111,7 +111,7 @@ export function inferGenreHints(tddText = "") {
     hints.push({
       genre: "kart",
       brief:
-        "Kart/race loop: PathKit track + lap increment on finish; race Finishes at totalLaps; HudKit lap/pos/speed; MinimapKit optional; JuiceKit on drift/boost; restart R.",
+        "Kart/race loop: PathKit track + lap increment on finish; race Finishes at totalLaps; HudKit lap/pos/speed; MinimapKit optional; JuiceKit on drift/boost; PresentationKit curb/trails if TDD art asks; restart R.",
     });
   }
   if (collector) {
@@ -132,18 +132,43 @@ export function inferGenreHints(tddText = "") {
     hints.push({
       genre: "generic",
       brief:
-        "Generic loop: start → core verb → win/lose or round → restart; live HUD; graybox primitives only.",
+        "Generic loop: start → core verb → win/lose or round → restart; live HUD; graybox primitives; raise look with PresentationKit only if TDD defines atmosphere/palette.",
     });
   }
   return hints;
 }
 
+/** TDD signals that raise the presentation ceiling (soft advisory). */
+export function tddAsksPresentation(tddText = "") {
+  return /\b(fog|grain|vignette|vhs|atmosphere|atmosphere\s*director|color\s*grade|master\s*palette|art\s*direction|post[\s-]?process|ur\s*volume|volume\s+profile|kelvin|fluorescent|curb\s*stripe)\b/i.test(
+    String(tddText),
+  );
+}
+
+/** Quiet / horror HUD — prefer liminal/muted HudKit theme over loud arcade chrome. */
+export function tddAsksQuietHud(tddText = "") {
+  return /\b(liminal|backrooms|horror|sanity|hud\s+almost\s+invisible|minimal\s+ui|diegetic|threshold\s*hud|atmosphere\s+is\s+the\s+primary|uncanny)\b/i.test(
+    String(tddText),
+  );
+}
+
 export function buildGenreBrief(tddText = "") {
   const hints = inferGenreHints(tddText);
-  return [
+  const lines = [
     "## Inferred loop brief (from TDD — follow these contracts)",
     ...hints.map((h) => `- **${h.genre}:** ${h.brief}`),
-  ].join("\n");
+  ];
+  if (tddAsksPresentation(tddText)) {
+    lines.push(
+      "- **presentation:** TDD defines atmosphere/palette/post — match fog/overlays/palette via PresentationKit; meshes stay primitives.",
+    );
+  }
+  if (tddAsksQuietHud(tddText)) {
+    lines.push(
+      "- **hud-theme:** TDD implies quiet/horror UI — HudKit `theme: \"liminal\"` or `themeFromPalette({ accent })`; keep layout, tone down arcade chrome.",
+    );
+  }
+  return lines.join("\n");
 }
 
 async function readGameplayBundle(root) {
@@ -319,9 +344,42 @@ export async function advisePlayability({ root, tddText = "" }) {
       id: "remote-art",
       severity: "info",
       message:
-        "Gameplay references image URLs or Image() — prefer graybox primitive + label for items.",
-      chatHint: "Replace item icons with colored primitives or emoji/text labels (no remote images)",
+        "Gameplay references image URLs or Image() — prefer graybox primitives, procedural canvas textures, or PresentationKit overlays.",
+      chatHint: "Replace remote images with colored primitives, CanvasTexture, or PresentationKit (no remote art URLs)",
     });
+  }
+
+  if (tddAsksPresentation(tddText) && bundle.hasMain) {
+    const hasLook =
+      /PresentationKit|createPresentation|applyFog|scene\.fog\s*=/.test(src) ||
+      /setGrain|setVignette|setVhs|setWash/.test(src);
+    if (!hasLook) {
+      advice.push({
+        id: "presentation-ceiling",
+        severity: "info",
+        message:
+          "TDD implies atmosphere/fog/post/palette — soft check: no PresentationKit / fog found in gameplay.",
+        chatHint:
+          "Import createPresentation from /runtime/PresentationKit.js; applyFog + grain/vignette/wash to match TDD numbers",
+      });
+    }
+  }
+
+  if (tddAsksQuietHud(tddText) && bundle.hasMain && /createHud/.test(src)) {
+    const themed =
+      /theme\s*:\s*[\"'](liminal|muted|stealth)[\"']/.test(src) ||
+      /themeFromPalette|setTheme\s*\(/.test(src) ||
+      /createHud\s*\([^)]*liminal|createHud\s*\([^)]*muted|createHud\s*\([^)]*stealth/.test(src);
+    if (!themed) {
+      advice.push({
+        id: "hud-theme",
+        severity: "info",
+        message:
+          "TDD implies quiet/horror HUD — soft check: HudKit still looks like default arcade chrome.",
+        chatHint:
+          'createHud(hudRoot, { theme: themeFromPalette({ accent: "#C9B45A", preset: "liminal" }) }) — same panels, quieter skin',
+      });
+    }
   }
 
   if (!advice.length) {

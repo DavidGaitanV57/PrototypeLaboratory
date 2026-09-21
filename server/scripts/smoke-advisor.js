@@ -5,6 +5,8 @@ import {
   buildGenreBrief,
   formatAdviceForChat,
   inferGenreHints,
+  tddAsksPresentation,
+  tddAsksQuietHud,
 } from "../agent/playabilityAdvisor.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -38,6 +40,27 @@ if (platformHints.some((h) => h.genre === "platformer") && !platformHints.some((
 const brief = buildGenreBrief(kartTdd);
 if (/lap increment|PathKit track/i.test(brief)) ok("buildGenreBrief includes kart contract");
 else fail("genre brief missing kart contract");
+
+const fogTdd =
+  "AtmosphereDirector: linear fog near 8 far 42, grain 0.18, vignette, master palette #C9B45A";
+if (tddAsksPresentation(fogTdd)) ok("tddAsksPresentation fog/grain");
+else fail("expected presentation signal");
+if (!tddAsksPresentation(kartTdd)) ok("plain kart TDD does not force presentation");
+else fail("plain kart should not ask presentation");
+
+const fogBrief = buildGenreBrief(fogTdd + "\n" + kartTdd);
+if (/presentation:|PresentationKit/i.test(fogBrief)) ok("buildGenreBrief includes presentation contract");
+else fail("genre brief missing presentation when TDD asks");
+
+const quietTdd =
+  "Liminal horror. HUD almost invisible. Atmosphere is the primary product. Sanity vignette.";
+if (tddAsksQuietHud(quietTdd)) ok("tddAsksQuietHud liminal");
+else fail("expected quiet HUD signal");
+if (!tddAsksQuietHud(kartTdd)) ok("plain kart TDD does not force quiet HUD");
+else fail("plain kart should not ask quiet HUD");
+const quietBrief = buildGenreBrief(quietTdd);
+if (/hud-theme|liminal/i.test(quietBrief)) ok("buildGenreBrief includes hud-theme contract");
+else fail("genre brief missing hud-theme when TDD asks quiet UI");
 
 const report = await advisePlayability({ root: ROOT, tddText: kartTdd });
 if (report.ok !== true) fail("advisor must always ok:true");

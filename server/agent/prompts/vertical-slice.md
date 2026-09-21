@@ -2,7 +2,7 @@
 
 You are building a **playable vertical slice** — a short game that feels fun in the first minute, not a debug sandbox.
 
-Graybox art only (primitives + matte colors). **Presentation is part of the product**, same as mechanics.
+Graybox art only (primitives + matte colors by default). **Presentation is part of the product**, same as mechanics — raise look when the TDD defines art/atmosphere (see presentation ceiling).
 
 ## Required modules (every Generate Final)
 
@@ -16,14 +16,18 @@ Optional when the TDD implies them:
 
 - `/runtime/PathKit.js` — splines, lap progress, patrol paths (race, lanes, circuits)
 - `/runtime/MinimapKit.js` — 2D minimap inside a HudKit panel (race, stealth, open world)
+- `/runtime/PresentationKit.js` — fog, grain, vignette, VHS, wash, curb stripes, trails (when TDD art/atmosphere asks)
 
 ## HudKit quick start
 
 ```js
-import { createHud } from "/runtime/HudKit.js";
+import { createHud, themeFromPalette } from "/runtime/HudKit.js";
 
 export function mountHud(hudRoot) {
-  const hud = createHud(hudRoot);
+  // Default arcade (party/kart). For liminal/horror TDDs use theme: "liminal".
+  // Or tint from TDD master palette hex:
+  // const hud = createHud(hudRoot, { theme: themeFromPalette({ accent: "#C9B45A", preset: "liminal" }) });
+  const hud = createHud(hudRoot, { theme: "arcade" });
   const pos = hud.panel("top-left");
   pos.stat("rank", "POS", { large: true });
   const speed = hud.panel("bottom-left", { minWidth: "200px" });
@@ -34,7 +38,8 @@ export function mountHud(hudRoot) {
 }
 ```
 
-Keep panels off **bottom-right** (lab chrome). Update stats every frame from game state.
+Keep panels off **bottom-right** (lab chrome). Update stats every frame from game state.  
+**Theme skins the chrome only** — same anchors, stats, toast, overlay, restart. Presets: `arcade`/`party`, `liminal`, `muted`, `stealth`, or `themeFromPalette({ accent })`.
 
 ## JuiceKit quick start
 
@@ -61,13 +66,15 @@ const juice = createJuice({ camera, canvas });
 - Build a **readable arena** for the fantasy: spline track, column of platforms, room bounds, wave spawn ring.
 - SceneKit grid is OK as base — **add** landmarks (props, hazards, checkpoints) that communicate roles.
 - NPCs implied by TDD must move/update every frame.
+- If the TDD locks palette / fog / post, raise the presentation ceiling (PresentationKit) — still no empty grid alone.
 
 ## Fun bar (self-check before stop)
 
-- [ ] Fantasy clear in &lt;3 seconds?
+- [ ] Fantasy clear in &lt;3 seconds (silhouette + mood/palette if TDD defines them)?
 - [ ] Core verb feels responsive (juice on hit/pickup/boost)?
 - [ ] HUD numbers **change** during play?
 - [ ] Win **or** lose + restart without F5?
 - [ ] At least one toast or result overlay on round end?
+- [ ] If TDD lists fog/grain/vignette/VHS/palette — presentation matches?
 
 Do **not** ship: lone cube on infinite grid, static HUD, module-name debug panels.

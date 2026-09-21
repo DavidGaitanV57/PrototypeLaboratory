@@ -21,6 +21,7 @@ export async function loadPromptPack() {
     syncPreview,
     genreLoop,
     verticalSlice,
+    presentation,
   ] = await Promise.all([
     readPrompt("playable-quality.md"),
     readPrompt("generate-final.md"),
@@ -31,6 +32,7 @@ export async function loadPromptPack() {
     readPrompt("sync-preview.md"),
     readPrompt("genre-loop.md"),
     readPrompt("vertical-slice.md"),
+    readPrompt("presentation.md"),
   ]);
   return {
     quality,
@@ -42,30 +44,124 @@ export async function loadPromptPack() {
     syncPreview,
     genreLoop,
     verticalSlice,
+    presentation,
   };
 }
 
-export function buildGenerateFinalPrompt({ slug, tddText, agentsMd, pack, tddRelPath }) {
+/** Compact rules — replaces pasting AGENTS + full quality/vertical/genre/presentation packs. */
+const GENERATE_COMPACT_CONTRACTS = `## Compact contracts (do not re-read whole prompt packs)
+
+Write **only** \`public/gameplay/**\`. Never edit \`public/runtime/**\`, lab UI, \`server/**\`, or the TDD.
+
+Entry: \`main.js\` exports \`mount(canvas, { hudRoot })\` + \`unmount()\`. Prefer return \`{ sceneKit }\`.
+
+Required: \`hud.js\` (HudKit), \`juice.js\` (JuiceKit). Full loop: start → verb → win/lose → restart (no F5). Delta-time movement. HUD off bottom-right.
+
+Graybox meshes (primitives). Raise look when TDD defines fog/grain/vignette/palette via PresentationKit. Theme HudKit (\`arcade\`/\`party\` vs \`liminal\`/\`muted\`/\`stealth\` or \`themeFromPalette\`) from TDD mood.
+
+Kits (import, do **not** read full runtime sources): \`/runtime/Engine.js\`, SceneKit, Input, Primitives, CameraRig, HudKit, JuiceKit, PathKit, MinimapKit, PresentationKit.
+
+- Hud: \`createHud(root, { theme })\` — panels, stats, toast, showResult.
+- Juice: \`createJuice({ camera, canvas })\` — shake/flash/hit-stop.
+- Look: \`createPresentation({ canvas })\` — applyFog, setGrain/Vignette/Vhs/Wash, trails/curbs when TDD asks.
+
+Kart: PathKit laps must increment; finish at totalLaps. Collector/arena/platformer: live HUD + win/lose + restart.`;
+
+/**
+ * Short TDD digest for Generate Final — enough fantasy/loop/mechanics list without the full doc.
+ * Model should read_file the TDD path for quantified numbers.
+ */
+export function summarizeTddForPrompt(tddText = "", { maxChars = 10_000 } = {}) {
+  const text = String(tddText || "");
+  if (!text.trim()) return "(TDD empty — read the file at Path below.)";
+  if (text.length <= maxChars) return text;
+
+  const chunks = [];
+  const grab = (re, label, lim = 1800) => {
+    const m = text.match(re);
+    if (!m) return;
+    chunks.push(`### ${label}\n${m[0].slice(0, lim).trim()}`);
+  };
+
+  grab(/#\s*1\s*[·.].*?(?=\n#\s*2\b)/is, "High concept", 1200);
+  grab(/#\s*3\s*[·.].*?(?=\n#\s*4\b)/is, "Core gameplay / loop", 2000);
+  grab(/#\s*8\s*[·.].*?(?=\n#\s*9\b)/is, "Art / atmosphere", 2200);
+  grab(/#\s*9\s*[·.].*?(?=\n#\s*10\b)/is, "UI / UX", 900);
+  grab(/##\s*11\.3\b[\s\S]*?(?=\n##\s*11\.\d|\n#\s*12\b)/i, "Input map", 1200);
+  grab(/##\s*11\.5\b[\s\S]*?(?=\n##\s*11\.\d|\n#\s*12\b)/i, "Camera / movement", 900);
+
+  const mechanics = [...text.matchAll(/^#{2,3}\s*Mechanic:[^\n]+/gim)].map((m) => m[0].replace(/^#+\s*/, ""));
+  if (mechanics.length) {
+    chunks.push(`### Mechanics (§B titles — read file for rules)\n${mechanics.map((m) => `- ${m}`).join("\n")}`);
+  }
+
+  let out = chunks.join("\n\n").trim();
+  if (!out) out = text.slice(0, maxChars);
+  if (out.length > maxChars) out = `${out.slice(0, maxChars - 80).trim()}\n\n…(digest truncated)`;
+  out += `\n\n_(Full TDD is longer — use read_file on the path for complete §B numbers/rules. Do not re-dump the whole TDD into chat.)_`;
+  return out;
+}
+
+/**
+ * Generate Final prompt.
+ * Default is **slim** (chat-web spend): compact contracts + TDD digest + read_file for details.
+ * Pass `verbose: true` only for debugging (pastes AGENTS + full packs + full TDD — burns quota).
+ */
+export function buildGenerateFinalPrompt({
+  slug,
+  tddText,
+  agentsMd,
+  pack,
+  tddRelPath,
+  runtime = "llm",
+  verbose = false,
+}) {
   const genreBrief = buildGenreBrief(tddText);
   const tddPath = tddRelPath || `docs/tdds/${slug}/TDD.md`;
+
+  if (verbose) {
+    return [
+      agentsMd,
+      "",
+      pack.quality,
+      "",
+      pack.verticalSlice,
+      "",
+      pack.presentation,
+      "",
+      pack.genreLoop,
+      "",
+      genreBrief,
+      "",
+      pack.generateFinal,
+      "",
+      `## Active TDD slug: ${slug}`,
+      `Path: ${tddPath}`,
+      "",
+      "## TDD contents",
+      tddText,
+    ].join("\n");
+  }
+
+  // Cursor can open files itself; LLM uses read_file — same slim user message either way.
+  void runtime;
   return [
-    agentsMd,
+    pack.generateFinal,
     "",
-    pack.quality,
-    "",
-    pack.verticalSlice,
-    "",
-    pack.genreLoop,
+    GENERATE_COMPACT_CONTRACTS,
     "",
     genreBrief,
-    "",
-    pack.generateFinal,
     "",
     `## Active TDD slug: ${slug}`,
     `Path: ${tddPath}`,
     "",
-    "## TDD contents",
-    tddText,
+    "## First actions (quota-aware)",
+    "1. read_file the TDD path once for §B / §3 / art / input numbers you need — then **write** `main.js`, `hud.js`, `juice.js` immediately.",
+    "2. Do **not** read every file under `public/runtime/` — import kits; truncated runtime reads are intentional.",
+    "3. Do not paste AGENTS.md or prompt packs into tools; contracts above are enough.",
+    "",
+    "## TDD digest",
+    summarizeTddForPrompt(tddText),
   ].join("\n");
 }
 
@@ -138,6 +234,7 @@ export function buildChatPrompt({
       `TDD slug: ${slug}. Prefer reading docs/tdds/${slug}/TDD.md and public/gameplay/** yourself.`,
       "Write only under public/gameplay/**. Do not edit public/runtime/**, public/app.js, server/**, or AGENTS.md.",
       "Keep mount/unmount, HudKit/JuiceKit, full loop (win/lose/restart), graybox primitives.",
+      "If TDD defines fog/grain/vignette/palette/atmosphere, raise look with PresentationKit.",
       "Match the user language. Keep the reply short after edits.",
       lang,
       scopeBlock,
@@ -158,6 +255,7 @@ export function buildChatPrompt({
     "## Mode: AGENT (edit gameplay)",
     `TDD slug: ${slug} (TDD file is read-only this turn).`,
     "Write only `public/gameplay/**`. Keep mount/unmount, HudKit, JuiceKit, full loop, graybox.",
+    "If TDD defines fog/grain/vignette/palette/atmosphere, use PresentationKit.",
     "Do not edit `public/runtime/**`, lab UI, `server/**`, or `AGENTS.md`.",
     "If you need TDD numbers/rules, read `docs/tdds/<slug>/TDD.md` with tools — do not wait for a pasted dump.",
     lang,

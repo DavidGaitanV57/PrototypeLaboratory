@@ -43,13 +43,27 @@ function isRetryableNetwork(err) {
   if (!err || isAbortError(err)) return false;
   const msg = String(err.message || err);
   const code = err.code || err.cause?.code || "";
+  const causeMsg = String(err.cause?.message || "");
   return (
     /fetch failed|network|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket|TLS|undici|other side closed|terminated|timeout|UND_ERR/i.test(
       msg,
     ) ||
-    /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|UND_ERR/i.test(String(code))
+    /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|UND_ERR/i.test(String(code)) ||
+    /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|socket|TLS|UND_ERR/i.test(causeMsg)
   );
 }
+
+/** Undici often wraps the real reason in err.cause — surface it in the UI. */
+function formatNetworkErr(err, fallback = "fetch failed") {
+  const top = String(err?.message || fallback).trim() || fallback;
+  const cause = err?.cause;
+  if (!cause) return top;
+  const bit = String(cause.code || cause.message || cause).trim();
+  if (!bit || top.includes(bit)) return top;
+  return `${top} (${bit})`;
+}
+
+const MAX_NETWORK_RETRIES = 14;
 
 function backoffMs(attempt) {
   const exp = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(attempt - 1, 6));
@@ -78,6 +92,26 @@ function wantsResponsesApi(detail) {
   return /\/v1\/responses/i.test(text) || (/function tools/i.test(text) && /reasoning_effort/i.test(text));
 }
 
+/**
+ * Cap tool read payloads so multi-turn Generate Final does not re-send huge runtime/TDD dumps.
+ * Runtime sources are intentionally tiny — agents should import kits, not paste APIs.
+ */
+function truncateToolRead(rel, body) {
+  const text = String(body ?? "");
+  const norm = String(rel || "").replace(/\\/g, "/");
+  let max = 48_000;
+  if (/^public\/runtime\//i.test(norm)) max = 6_000;
+  else if (/^docs\/tdds\//i.test(norm)) max = 28_000;
+  else if (/AGENTS\.md$/i.test(norm) || /^server\/agent\/prompts\//i.test(norm)) max = 4_000;
+  if (text.length <= max) return text;
+  return (
+    `${text.slice(0, max)}\n\n` +
+    `…(truncated ${text.length - max} chars from ${norm}; ` +
+    `for runtime kits prefer import from /runtime/*.js — do not re-read full sources. ` +
+    `For TDD, re-read only if you still need a specific section.)`
+  );
+}
+
 function chatToolsToResponses(tools) {
   return (tools || []).map((t) => ({
     type: "function",
@@ -85,6 +119,88 @@ function chatToolsToResponses(tools) {
     description: t.function?.description || "",
     parameters: t.function?.parameters || { type: "object", properties: {} },
   }));
+}
+
+/**
+ * Read an OpenAI-compatible SSE chat.completions stream into one message.
+ * Streaming keeps gateways (esp. Kimi Code) from closing idle non-stream connections
+ * while the model thinks / emits a long tool-call turn.
+ */
+async function readChatCompletionStream(res) {
+  if (!res.body || typeof res.body.getReader !== "function") {
+    return res.json();
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let role = "assistant";
+  let content = "";
+  /** @type {Array<{ id: string, type: string, function: { name: string, arguments: string } }>} */
+  const toolCalls = [];
+  let finishReason = null;
+  let usage = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith(":")) continue;
+      if (!trimmed.startsWith("data:")) continue;
+      const payload = trimmed.slice(5).trim();
+      if (!payload || payload === "[DONE]") continue;
+      let json;
+      try {
+        json = JSON.parse(payload);
+      } catch {
+        continue;
+      }
+      if (json.usage) usage = json.usage;
+      const choice = json.choices?.[0];
+      if (!choice) continue;
+      if (choice.finish_reason) finishReason = choice.finish_reason;
+      const delta = choice.delta || choice.message || {};
+      if (delta.role) role = delta.role;
+      if (typeof delta.content === "string") content += delta.content;
+      if (Array.isArray(delta.tool_calls)) {
+        for (const tc of delta.tool_calls) {
+          const idx = Number.isInteger(tc.index) ? tc.index : toolCalls.length;
+          if (!toolCalls[idx]) {
+            toolCalls[idx] = {
+              id: "",
+              type: "function",
+              function: { name: "", arguments: "" },
+            };
+          }
+          const slot = toolCalls[idx];
+          if (tc.id) slot.id = tc.id;
+          if (tc.type) slot.type = tc.type;
+          if (tc.function?.name) slot.function.name += tc.function.name;
+          if (typeof tc.function?.arguments === "string") {
+            slot.function.arguments += tc.function.arguments;
+          }
+        }
+      }
+    }
+  }
+
+  const calls = toolCalls.filter((c) => c && (c.id || c.function?.name));
+  return {
+    choices: [
+      {
+        message: {
+          role,
+          content: content || null,
+          ...(calls.length ? { tool_calls: calls } : {}),
+        },
+        finish_reason: finishReason,
+      },
+    ],
+    ...(usage ? { usage } : {}),
+  };
 }
 
 function messagesToResponsesInput(messages) {
@@ -316,7 +432,8 @@ export function createLlmProvider({
     }
     if (name === "read_file") {
       if (isSensitiveRel(rel)) throw new Error("Access denied to sensitive file");
-      return await fs.readFile(abs, "utf8");
+      const body = await fs.readFile(abs, "utf8");
+      return truncateToolRead(rel, body);
     }
     if (name === "write_file") {
       assertAgentWriteAllowed(rel, writeMode, { slug });
@@ -444,6 +561,7 @@ export function createLlmProvider({
       async function fetchCompletion(turnNo) {
         let attempt = 0;
         let switchedToResponses = false;
+        let forceNonStream = false;
         while (!aborted) {
           attempt += 1;
           const turnAc = new AbortController();
@@ -452,6 +570,7 @@ export function createLlmProvider({
           ac.signal.addEventListener("abort", onCancel);
 
           try {
+            const useStream = !useResponses && !forceNonStream;
             const res = await fetch(useResponses ? responsesEndpoint : chatEndpoint, {
               method: "POST",
               headers: {
@@ -466,6 +585,7 @@ export function createLlmProvider({
                       messages,
                       tools,
                       tool_choice: "auto",
+                      ...(useStream ? { stream: true } : {}),
                     },
               ),
               signal: turnAc.signal,
@@ -473,6 +593,18 @@ export function createLlmProvider({
 
             if (!res.ok) {
               const errText = await res.text();
+              if (
+                useStream &&
+                !forceNonStream &&
+                (/stream/i.test(errText) || res.status === 400)
+              ) {
+                forceNonStream = true;
+                onEvent?.({
+                  type: "status",
+                  message: "Provider rejected stream — retrying without stream…",
+                });
+                continue;
+              }
               if (!useResponses && !switchedToResponses && wantsResponsesApi(errText)) {
                 useResponses = true;
                 switchedToResponses = true;
@@ -499,6 +631,7 @@ export function createLlmProvider({
               const httpErr = new Error(`LLM HTTP ${res.status}: ${errText.slice(0, 400)}`);
               httpErr.status = res.status;
               if (isRetryableHttp(res.status) && !aborted) {
+                if (attempt > MAX_NETWORK_RETRIES) throw httpErr;
                 const wait = backoffMs(attempt);
                 onEvent?.({
                   type: "status",
@@ -510,21 +643,33 @@ export function createLlmProvider({
               throw httpErr;
             }
 
-            const data = await res.json();
-            if (!useResponses) return data;
-            const normalized = normalizeResponsesPayload(data);
-            if (normalized.id) lastResponseId = normalized.id;
-            return normalized;
+            if (useResponses) {
+              const data = await res.json();
+              const normalized = normalizeResponsesPayload(data);
+              if (normalized.id) lastResponseId = normalized.id;
+              return normalized;
+            }
+
+            if (useStream) {
+              return await readChatCompletionStream(res);
+            }
+            return await res.json();
           } catch (err) {
             if (aborted || ac.signal.aborted || isAbortError(err)) {
               throw Object.assign(new Error("Stopped"), { name: "AbortError" });
             }
             if (isRetryableNetwork(err) || turnAc.signal.aborted) {
+              if (attempt > MAX_NETWORK_RETRIES) {
+                throw new Error(
+                  `${formatNetworkErr(err)}. Gave up after ${attempt} tries on turn ${turnNo}. ` +
+                    `Long Generate Final turns often drop on Kimi without streaming — retry, Continue from checkpoint, or use Cursor.`,
+                );
+              }
               const wait = backoffMs(attempt);
               const why =
                 turnAc.signal.aborted && !ac.signal.aborted
                   ? "request timed out"
-                  : err.message || "fetch failed";
+                  : formatNetworkErr(err);
               onEvent?.({
                 type: "status",
                 message: `${why} — retry ${attempt} in ${(wait / 1000).toFixed(1)}s (turn ${turnNo}, Stop to cancel)`,
@@ -615,7 +760,7 @@ export function createLlmProvider({
             messages.push({
               role: "tool",
               tool_call_id: call.id,
-              content: String(result).slice(0, 120000),
+              content: String(result).slice(0, 48_000),
             });
           }
           saveCheckpoint(messages, turn);
