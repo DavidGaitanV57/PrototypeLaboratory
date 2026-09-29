@@ -44,6 +44,12 @@ const cases = [
   ["genre: \"3D platformer\"\njump double jump coins", "platformer"],
   ["| **Genre / sub-genre** | Mini-game / arcade collector |\ncollect coins before the timer", "platformer"],
   ["Top-down arena brawler. Survive waves of enemies.", "arena"],
+  // Real false positives: technical "fps" / "diegetic HUD" must not pick first-person.
+  ['genre: "Rhythm-action platformer"\n| FPS target | 60 fps |\nAll game information is diegetic.', "platformer"],
+  ["| **Genre / sub-genre** | Cozy pinball |\n60 fps on mobile. Warm, patient, diegetic.", null],
+  ["# 1 · High Concept\nA cozy pinball game where the table heals.\n# 4 · Mechanics\n60 fps", null],
+  ['genre: "Liminal horror / walking sim"', "firstperson"],
+  ['genre: "Twin-stick shooter"', "arena"],
 ];
 for (const [text, want] of cases) {
   const got = pickTemplate(text).id;
@@ -53,6 +59,9 @@ for (const [text, want] of cases) {
 
 // Seeding into a temp root + prompt section
 const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "plab-tpl-"));
+const none = await seedTemplateIfEmpty(path.join(tmp, "none"), 'genre: "Pinball"', { env: {} });
+if (!none.seeded && /no starter/i.test(none.skipped || "")) ok("no starter for pinball → nothing seeded");
+else fail(`pinball should not seed: ${JSON.stringify(none)}`);
 const seed = await seedTemplateIfEmpty(tmp, "genre: kart racer, laps", { env: {} });
 if (seed.seeded && seed.id === "kart" && seed.files.includes("public/gameplay/main.js")) ok("seedTemplateIfEmpty seeds kart");
 else fail(`seed failed: ${JSON.stringify(seed)}`);

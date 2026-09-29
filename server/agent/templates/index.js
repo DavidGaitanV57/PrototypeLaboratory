@@ -8,7 +8,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { inferGenreHints, tddAsksQuietHud } from "../playabilityAdvisor.js";
+import { inferGenreHints } from "../playabilityAdvisor.js";
 
 const TEMPLATES_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -39,19 +39,56 @@ export const TEMPLATES = {
   },
 };
 
+/** Declared genre from the TDD (YAML `genre:` or the `Genre / sub-genre` table row). */
+export function declaredGenre(tddText = "") {
+  const t = String(tddText);
+  const yaml = t.match(/^genre:\s*["']?([^"'\n]+)/im);
+  if (yaml) return yaml[1].trim();
+  const table = t.match(/\|\s*\*\*Genre\s*\/\s*sub-genre\*\*\s*\|\s*([^|\n]+)\|/i);
+  return table ? table[1].trim() : "";
+}
+
+// Order matters: the first family whose pattern hits wins ("rhythm-action platformer" → platformer, not arena).
+const FAMILIES = [
+  ["kart", /\b(kart|racing|racer|race)\b/i],
+  ["platformer", /\b(platformer|platforming|platform game|metroidvania|runner|jump\s*'?n'?\s*run|collectathon|collector|vertical ascent|endless (?:climber|vertical))\b/i],
+  ["firstperson", /\b(first[-\s]?person|fps shooter|first-person shooter|horror|backrooms|liminal|stealth|infiltration|walking sim\w*|immersive sim)\b/i],
+  ["arena", /\b(arena|twin[-\s]?stick|shoot(?:er|\s*'?em\s*up)|brawler|beat\s*'?em\s*up|hack\s*(?:and|&|'n')\s*slash|wave survival|survivor(?:s|-like)?|roguelite|roguelike|action)\b/i],
+];
+
+// Genres no starter fits — seeding one would push the agent toward the wrong game.
+const NO_STARTER = /\b(pinball|puzzle|match[-\s]?3|card|deck[-\s]?builder|strategy|tower defen[cs]e|city[-\s]?builder|management|tycoon|visual novel|rhythm game|music game|golf|billiards|pool|sports|fighting game|board game|idle|clicker|trivia|word game)\b/i;
+
+function familyOf(text) {
+  for (const [id, re] of FAMILIES) if (re.test(text)) return id;
+  return null;
+}
+
 /**
- * Pick the closest template for a TDD.
- * @returns {{ id: string, reason: string }}
+ * Pick the closest template for a TDD, or `{ id: null }` when none fits.
+ * The declared genre decides; body text is only a fallback. Technical text such as "60 fps",
+ * "FPS target" or "diegetic HUD" must never pick a genre.
+ * @returns {{ id: string|null, reason: string, genre?: string }}
  */
 export function pickTemplate(tddText = "") {
   const t = String(tddText);
-  const genres = inferGenreHints(t).map((h) => h.genre);
-  const firstPerson = /\b(first[-\s]?person|fps|backrooms|liminal|horror|stealth|infiltrat\w*|walking\s+sim\w*|explor\w+\s+(?:game|horror)|noclip)\b/i.test(t);
-  if (genres.includes("kart")) return { id: "kart", reason: "TDD reads as a kart/race loop" };
-  if (firstPerson || tddAsksQuietHud(t)) return { id: "firstperson", reason: "TDD implies first-person / horror / stealth" };
-  if (genres.includes("platformer")) return { id: "platformer", reason: "TDD reads as a platformer / collector" };
-  if (genres.includes("collector")) return { id: "platformer", reason: "Collector loop — platformer starter has collectibles + goal" };
-  return { id: "arena", reason: "Action / arena / generic loop" };
+  const genre = declaredGenre(t);
+  if (genre) {
+    const fam = familyOf(genre);
+    if (fam) return { id: fam, genre, reason: `declared genre "${genre}"` };
+    if (NO_STARTER.test(genre)) return { id: null, genre, reason: `no starter fits declared genre "${genre}"` };
+    return { id: null, genre, reason: `declared genre "${genre}" does not match a starter` };
+  }
+  // No declared genre: look only at the high-concept / core-gameplay sections, not budgets or gates.
+  const head = (t.match(/#\s*1\s*[·.][\s\S]*?(?=\n#\s*4\b)/i) || [t.slice(0, 6000)])[0];
+  if (NO_STARTER.test(head)) return { id: null, reason: "high concept names a genre with no starter" };
+  const hints = inferGenreHints(head).map((h) => h.genre);
+  if (hints.includes("kart")) return { id: "kart", reason: "high concept reads as a kart/race loop" };
+  const fam = familyOf(head);
+  if (fam) return { id: fam, reason: `high concept reads as ${fam}` };
+  if (hints.includes("platformer") || hints.includes("collector")) return { id: "platformer", reason: "high concept reads as a platformer / collector" };
+  if (hints.includes("arena")) return { id: "arena", reason: "high concept reads as arena / combat" };
+  return { id: null, reason: "no clear genre — generating without a starter" };
 }
 
 async function exists(p) {
@@ -72,6 +109,7 @@ export async function seedTemplateIfEmpty(root, tddText, { env = process.env } =
   const gameplay = path.join(root, "public", "gameplay");
   if (await exists(path.join(gameplay, "main.js"))) return { seeded: false, skipped: "existing build kept (Clean project to start from a genre starter)" };
   const { id, reason } = pickTemplate(tddText);
+  if (!id) return { seeded: false, skipped: reason };
   const tpl = TEMPLATES[id];
   await fs.mkdir(gameplay, { recursive: true });
   const written = [];
@@ -93,9 +131,10 @@ export function templateBrief(seed) {
     "**Your job is to transform it into THIS TDD's game, not to start over:**",
     "1. `look.js` FIRST — rewrite the Look Bible from TDD art/atmosphere/UI/audio (LookKit preset + overrides, palette, HUD theme, music/ambience, intro, wow moment).",
     "2. `config.js` — META title/subtitle and every quantified TDD number (speeds, timers, counts, win/lose thresholds).",
-    "3. Rename and reshape mechanics, entities, level layout and HUD labels to the TDD's fiction and §B mechanics. Delete what the TDD does not want; add what it needs as new modules.",
-    "4. Keep the wiring that already works: mount/unmount, LookKit, HudKit title/countdown/result, feedback events in juice.js, `window.__plab` + `window.__PLAB_AUTOPLAY` hooks (visual QA drives the game with them).",
-    "5. The result must not look like the starter with a new name — silhouettes, palette, layout and verbs must be the TDD's.",
+    "3. Camera, movement space (2D / 2.5D side-view / 3D) and control mode come from TDD §11.5 — replace the starter's camera and controller when they differ (e.g. lock a side-scroller to the X/Y plane with a side follow camera).",
+    "4. Rename and reshape mechanics, entities, level layout and HUD labels to the TDD's fiction and §B mechanics. Delete what the TDD does not want; add what it needs as new modules.",
+    "5. Keep the wiring that already works: mount/unmount, LookKit, HudKit title/countdown/result, feedback events in juice.js, `window.__plab` + `window.__PLAB_AUTOPLAY` hooks (visual QA drives the game with them).",
+    "6. The result must not look like the starter with a new name — silhouettes, palette, layout and verbs must be the TDD's.",
     `Files: ${seed.files.map((f) => `\`${f}\``).join(", ")}`,
   ].join("\n");
 }

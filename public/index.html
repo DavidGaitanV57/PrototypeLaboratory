@@ -177,10 +177,11 @@
               <button type="button" id="syncBtn" class="play-menu__item play-menu__item--accent" role="menuitem">
                 <span class="play-menu__label">Sync TDD</span>
               </button>
-              <button type="button" id="qaBtn" class="play-menu__item" role="menuitem" title="Headless screenshots scored by a vision model">
+              <!-- Visual QA + Auto-polish: disabled in the menu for now (code kept). Remove `hidden` to re-enable. -->
+              <button type="button" id="qaBtn" class="play-menu__item" role="menuitem" hidden title="Headless screenshots scored by a vision model">
                 <span class="play-menu__label">Visual QA</span>
               </button>
-              <button type="button" id="qaPolishBtn" class="play-menu__item" role="menuitem" title="Visual QA, then let the agent fix the top issues (up to 2 rounds)">
+              <button type="button" id="qaPolishBtn" class="play-menu__item" role="menuitem" hidden title="Visual QA, then let the agent fix the top issues (up to 2 rounds)">
                 <span class="play-menu__label">Auto-polish</span>
               </button>
               <button type="button" id="exportPlayBtn" class="play-menu__item" role="menuitem" hidden>
