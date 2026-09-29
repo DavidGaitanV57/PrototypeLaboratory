@@ -10,7 +10,8 @@
     "start": "node --use-system-ca server/index.js",
     "dev": "node --use-system-ca --watch server/index.js",
     "seed": "node server/scripts/seed.js",
-    "smoke": "node server/scripts/smoke.js && node server/scripts/smoke-export.js && node server/scripts/smoke-advisor.js && node server/scripts/smoke-chat-merge.js && node server/scripts/smoke-runtime-kits.js && node server/scripts/smoke-llm-stream.js && node server/scripts/smoke-runtime-index.js && node server/scripts/smoke-tdd-index.js && node server/scripts/smoke-generate-prompt.js"
+    "smoke": "node server/scripts/smoke.js && node server/scripts/smoke-export.js && node server/scripts/smoke-advisor.js && node server/scripts/smoke-chat-merge.js && node server/scripts/smoke-runtime-kits.js && node server/scripts/smoke-llm-stream.js && node server/scripts/smoke-runtime-index.js && node server/scripts/smoke-tdd-index.js && node server/scripts/smoke-generate-prompt.js && node server/scripts/smoke-templates.js && node server/scripts/smoke-visual-qa.js",
+    "qa": "node server/scripts/visual-qa.js"
   },
   "dependencies": {
     "@cursor/sdk": "^1.0.0",
@@ -20,5 +21,8 @@
     "multer": "^2.2.0",
     "three": "^0.172.0",
     "uuid": "^11.0.5"
+  },
+  "optionalDependencies": {
+    "playwright-core": "^1.56.0"
   }
 }

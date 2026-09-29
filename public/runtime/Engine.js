@@ -25,7 +25,10 @@ export function createEngine(canvas, opts = {}) {
 
   const clock = new THREE.Clock();
   const updaters = [];
+  const resizeHooks = [];
   let running = false;
+  /** Optional render override (LookKit installs its post chain here). */
+  let renderFn = null;
 
   function onResize() {
     const w = canvas.clientWidth || window.innerWidth;
@@ -33,6 +36,7 @@ export function createEngine(canvas, opts = {}) {
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     renderer.setSize(w, h, false);
+    for (const fn of resizeHooks) fn(w, h);
   }
 
   window.addEventListener("resize", onResize);
@@ -40,7 +44,8 @@ export function createEngine(canvas, opts = {}) {
   function animate() {
     const dt = Math.min(clock.getDelta(), 0.1);
     for (const fn of updaters) fn(dt);
-    renderer.render(scene, camera);
+    if (renderFn) renderFn(dt);
+    else renderer.render(scene, camera);
   }
 
   function start() {
@@ -63,6 +68,19 @@ export function createEngine(canvas, opts = {}) {
     };
   }
 
+  /** Replace the default `renderer.render(scene, camera)` (null restores it). */
+  function setRenderFn(fn) {
+    renderFn = typeof fn === "function" ? fn : null;
+  }
+
+  function onResizeHook(fn) {
+    resizeHooks.push(fn);
+    return () => {
+      const i = resizeHooks.indexOf(fn);
+      if (i >= 0) resizeHooks.splice(i, 1);
+    };
+  }
+
   function disposeObject(obj) {
     obj.traverse?.((child) => {
       if (child.geometry) child.geometry.dispose?.();
@@ -78,6 +96,8 @@ export function createEngine(canvas, opts = {}) {
 
   function dispose() {
     stop();
+    renderFn = null;
+    resizeHooks.length = 0;
     window.removeEventListener("resize", onResize);
     while (scene.children.length) {
       const c = scene.children.pop();
@@ -95,6 +115,8 @@ export function createEngine(canvas, opts = {}) {
     start,
     stop,
     onUpdate,
+    setRenderFn,
+    onResizeHook,
     dispose,
     onResize,
   };

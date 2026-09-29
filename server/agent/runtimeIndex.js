@@ -16,11 +16,16 @@ const indexCache = new Map();
 const PRIORITY = [
   "Engine.js",
   "SceneKit.js",
+  "LookKit.js",
   "Input.js",
   "Primitives.js",
   "CameraRig.js",
   "HudKit.js",
   "JuiceKit.js",
+  "FxKit.js",
+  "AudioKit.js",
+  "MaterialKit.js",
+  "WorldKit.js",
   "PathKit.js",
   "MinimapKit.js",
   "EventBus.js",
@@ -164,10 +169,10 @@ function returnedKeys(body) {
       const end = findBlockEnd(body, open);
       if (end === -1) continue;
       const keys = keysFromObjectLiteral(body.slice(open + 1, end));
-      if (keys.length >= 2) return keys.slice(0, 18);
+      if (keys.length >= 2) return keys.slice(0, 20);
     } else {
       const keys = keysFromNamedObject(body, after[1]);
-      if (keys.length >= 2) return keys.slice(0, 18);
+      if (keys.length >= 2) return keys.slice(0, 20);
     }
   }
   return [];

@@ -60,6 +60,8 @@ const chatPickerTriggerText = document.getElementById("chatPickerTriggerText");
 const chatPickerPopover = document.getElementById("chatPickerPopover");
 const chatPickerBlurb = document.getElementById("chatPickerBlurb");
 const syncBtn = document.getElementById("syncBtn");
+const qaBtn = document.getElementById("qaBtn");
+const qaPolishBtn = document.getElementById("qaPolishBtn");
 const exportPlayBtn = document.getElementById("exportPlayBtn");
 const reloadBtn = document.getElementById("reloadBtn");
 const playStatus = document.getElementById("playStatus");
@@ -343,6 +345,11 @@ function describeAgentStep(ev) {
     return n ? `${title} · ${n} step${n === 1 ? "" : "s"}` : title || "Plan ready";
   }
   if (ev.type === "ready") return "Playable ready";
+  if (ev.type === "qa-report") {
+    if (ev.overall != null) return `Visual QA · ${ev.overall}/10${ev.round ? ` (after polish ${ev.round})` : ""}`;
+    return `Visual QA · ${ev.reason || "not scored"}`;
+  }
+  if (ev.type === "template") return `Starter template · ${ev.id}`;
   if (ev.type === "benchmark") {
     const dur = formatDurationMs(ev.durationMs);
     if (ev.status === "error") {
@@ -1619,6 +1626,13 @@ function handleWorkEvent(ev, { chat = false } = {}) {
       setWorkStatus(summary.text);
       appendWorkLog(summary.text);
     }
+    return;
+  }
+  if (ev.type === "qa-report") {
+    const images = (ev.images || []).map((img) => ({ dataUrl: img.url, name: img.label }));
+    appendChat("sys", ev.digest || "Visual QA finished", { images });
+    setWorkStatus(ev.overall != null ? `Visual QA · ${ev.overall}/10` : `Visual QA · ${ev.reason || "not scored"}`);
+    appendWorkLog(ev.overall != null ? `Visual QA ${ev.overall}/10` : `Visual QA: ${ev.reason || "not scored"}`);
     return;
   }
   if (ev.type === "advice") {
@@ -3142,6 +3156,35 @@ syncBtn.addEventListener("click", async () => {
     setTimeout(hideWorkOverlay, 800);
   }
 });
+
+async function runVisualQa({ autofix = 0 } = {}) {
+  if (!sessionId) return alert("Generate Final or Continue first");
+  showWorkOverlay({
+    title: autofix ? "Auto-polish" : "Visual QA",
+    eyebrow: "Capture + review",
+    status: "Capturing gameplay headless…",
+  });
+  try {
+    await readSSE(
+      `/api/sessions/${sessionId}/visual-qa`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autofix }),
+      },
+      (ev) => handleWorkEvent(ev, { chat: true }),
+    );
+    setTimeout(hideWorkOverlay, 600);
+  } catch (err) {
+    if (err.name === "AbortError") return;
+    setWorkStatus(String(err.message || err));
+    appendWorkLog(String(err.message || err));
+    setTimeout(hideWorkOverlay, 1200);
+  }
+}
+
+qaBtn?.addEventListener("click", () => runVisualQa({ autofix: 0 }));
+qaPolishBtn?.addEventListener("click", () => runVisualQa({ autofix: 2 }));
 
 async function applySelectedSync() {
   if (!sessionId) return;

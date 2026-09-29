@@ -15,7 +15,17 @@ function fail(msg) {
   errors.push(msg);
 }
 
-const kits = ["HudKit.js", "JuiceKit.js", "PathKit.js", "MinimapKit.js"];
+const kits = [
+  "HudKit.js",
+  "JuiceKit.js",
+  "PathKit.js",
+  "MinimapKit.js",
+  "LookKit.js",
+  "FxKit.js",
+  "AudioKit.js",
+  "MaterialKit.js",
+  "WorldKit.js",
+];
 for (const name of kits) {
   try {
     const body = await fs.readFile(path.join(RUNTIME, name), "utf8");
@@ -39,6 +49,15 @@ if (/export\s+function\s+themeFromPalette/.test(hudBody) && /setTheme/.test(hudB
 } else fail("HudKit missing themeFromPalette/setTheme");
 if (/--hud-panel-bg/.test(hudBody)) ok("HudKit CSS variables for theming");
 else fail("HudKit missing CSS theme vars");
+
+const lookBody = await fs.readFile(path.join(RUNTIME, "LookKit.js"), "utf8").catch(() => "");
+if (/export\s+function\s+installLook/.test(lookBody) && /export\s+const\s+LOOK_PRESETS/.test(lookBody)) ok("LookKit installLook + LOOK_PRESETS");
+else fail("LookKit missing installLook/LOOK_PRESETS");
+if (!/examples\/jsm|three\/addons/.test(lookBody)) ok("LookKit uses core three only (export-safe)");
+else fail("LookKit must not import addons");
+const engineBody = await fs.readFile(path.join(RUNTIME, "Engine.js"), "utf8").catch(() => "");
+if (/setRenderFn/.test(engineBody)) ok("Engine exposes setRenderFn for post chains");
+else fail("Engine missing setRenderFn");
 
 const verticalSlice = path.join(ROOT, "server", "agent", "prompts", "vertical-slice.md");
 try {

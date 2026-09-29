@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildGenreBrief } from "../playabilityAdvisor.js";
+import { templateBrief } from "../templates/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = __dirname;
@@ -50,31 +51,49 @@ const GENERATE_COMPACT_CONTRACTS = `## Compact contracts (do not re-read whole p
 
 Write **only** \`public/gameplay/**\`. Never edit \`public/runtime/**\`, lab UI, \`server/**\`, or the TDD.
 
-Entry: \`main.js\` exports \`mount(canvas, { hudRoot })\` + \`unmount()\`. Prefer return \`{ sceneKit }\`.
+Entry: \`main.js\` exports \`mount(canvas, { hudRoot })\` + \`unmount()\`; return \`{ sceneKit }\`.
 
-Required: \`hud.js\` (HudKit), \`juice.js\` (JuiceKit). Full loop: start → verb → win/lose → restart (no F5). Delta-time movement. HUD off bottom-right.
+Required: \`look.js\` (Look Bible, written first), \`config.js\` (TDD numbers), \`hud.js\` (HudKit), \`juice.js\` (JuiceKit + FxKit + AudioKit feedback hub). Full loop: intro → verb → win/lose → restart (no F5). Delta-time movement. HUD off bottom-right.
 
-Graybox meshes (primitives). Theme HudKit (\`arcade\`/\`party\` vs \`liminal\`/\`muted\`/\`stealth\` or \`themeFromPalette\`) from TDD mood — same panels/layout, quieter or louder skin only.
+**Primitive geometry, production presentation:** LookKit on every build, dressed world (WorldKit/MaterialKit), animated characters (makeHero/animateCharacter), sight + sound + motion on every event, staged intro (camera + title) and ending (moment + result). Expose \`window.__plab = { state, info, restart }\` and honor \`window.__PLAB_AUTOPLAY\` (a simple bot) for visual QA.
 
-Kart: PathKit laps must increment; finish at totalLaps. Collector/arena/platformer: live HUD + win/lose + restart.
+Kart: PathKit laps must increment; finish at totalLaps. Collector/arena/platformer/stealth: live HUD + win/lose + restart.
 
 ### Kit usage (exact — no feature detection, no wrappers)
 
 \`\`\`js
-import { createHud, themeFromPalette } from "/runtime/HudKit.js";
-const hud = createHud(hudRoot, { theme: "arcade" }); // or themeFromPalette({ accent: "#C9B45A", preset: "liminal" })
+import { createEngine } from "/runtime/Engine.js";
+import { installSceneKit } from "/runtime/SceneKit.js";
+import { installLook } from "/runtime/LookKit.js";
+const engine = createEngine(canvas, { fov: 60 });
+const sceneKit = installSceneKit(engine.scene, { groundColor: 0x6fb85a });   // { ground:false } for indoor/floating levels
+const look = installLook(engine, { preset: "dusk", bloom: { strength: 0.5 } }); // look.follow(player) · look.setPreset("night") · look.pulse({ exposure: .3 })
+
+import { createHud } from "/runtime/HudKit.js";
+const hud = createHud(hudRoot, { theme: "arcade" }); // "liminal" | "muted" | "stealth" | { preset, accent: "#hex" }
 const panel = hud.panel("top-left", { minWidth: "200px" });   // anchors: top-left|top-right|top-center|bottom-left|bottom-center
 const score = panel.stat("score", "SCORE", { large: true });  // score.set("12")
 const bar = panel.bar("stamina", "STAMINA");                  // bar.set(0..1)
 hud.controlsHint("<b>WASD</b> move · <b>R</b> restart");
-hud.toast("Checkpoint");
+hud.titleCard("GAME TITLE", "subtitle"); hud.countdown(3, { onGo }); hud.toast("Checkpoint");
 hud.showResult("YOU ESCAPED", ["Time 02:14"], { onPlayAgain: restart });
-hud.hideResult(); hud.dispose();
 
 import { createJuice } from "/runtime/JuiceKit.js";
-const juice = createJuice({ camera, canvas });
-const dt = juice.filterDelta(rawDt); juice.update(rawDt);
-juice.shake(0.35); juice.flash("#ff5252"); juice.hitStop(0.05);
+import { createFx } from "/runtime/FxKit.js";
+import { createAudio } from "/runtime/AudioKit.js";
+const juice = createJuice({ camera, canvas, look });
+const fx = createFx(scene, { camera });
+const audio = createAudio(); audio.music("arcade"); audio.ambience("wind"); // styles: arcade|chill|tense|ambient|action
+const dt = juice.filterDelta(rawDt); fx.update(dt); juice.update(rawDt);
+juice.impact("medium"); juice.kick(6); juice.slowMo(0.3, 1); juice.floatText(pos, "+100");
+fx.pickup(pos, 0xffd23f); fx.sparks(pos); fx.explosion(pos); fx.confetti(pos); fx.trail(mesh); fx.ring(pos);
+audio.sfx("coin"); // jump land step coin pickup powerup hit hurt explosion shoot laser whoosh boost click confirm error alarm checkpoint win lose creak heartbeat
+audio.setEngine(throttle01); audio.setIntensity(0..1);
+
+import { makeHero, animateCharacter, makeVehicle, animateVehicle, roundedBox, makeArch } from "/runtime/Primitives.js";
+import { makeTree, makeRock, makeBackdrop, makeCloud, makeWater, makeGrass, scatter } from "/runtime/WorldKit.js";
+import { stylized, toon, glow, addOutline, noiseTexture, tilesTexture } from "/runtime/MaterialKit.js";
+import { createChaseCamera, createThirdPersonCamera, createIntroOrbit } from "/runtime/CameraRig.js";
 \`\`\``;
 
 /**
@@ -118,6 +137,7 @@ export function summarizeTddForPrompt(tddText = "", { maxChars = 10_000 } = {}) 
  * Pass `verbose: true` only for debugging (pastes AGENTS + full packs + full TDD — burns quota).
  */
 export function buildGenerateFinalPrompt({
+  templateSeed = null,
   slug,
   tddText,
   agentsMd,
@@ -163,13 +183,17 @@ export function buildGenerateFinalPrompt({
     "",
     genreBrief,
     "",
+    templateBrief(templateSeed),
+    "",
     `## Active TDD slug: ${slug}`,
     `Path: ${tddPath}`,
     "",
     "## First actions (quota-aware)",
     "1. `read_file` the TDD path once — you get a **section map**, not the whole doc.",
-    "2. `read_section` **every** `Mechanic: …` block the core loop needs, plus art/atmosphere and input sections. The digest below only lists titles; the quantified rules live in those sections.",
-    "3. Then **write** `main.js`, `hud.js`, `juice.js` and the mechanic modules.",
+    "2. `read_section` **every** `Mechanic: …` block the core loop needs, plus art/atmosphere (§8), UI (§9) and input sections. The digest below only lists titles; the quantified rules live in those sections.",
+    templateSeed?.seeded
+      ? "3. Read the seeded `main.js` + `look.js`, then rewrite `look.js` and `config.js` for this TDD and reshape the mechanic modules — keep the working wiring."
+      : "3. Then **write** `look.js` first, then `config.js`, `main.js`, `hud.js`, `juice.js` and the mechanic modules.",
     "4. Never open files under `public/runtime/` — the API index above is the full contract; import and use it as written.",
     "5. Do not re-read anything you already read this run, and do not paste AGENTS.md or prompt packs into tools.",
     "6. Trust the kits: no defensive wrappers, feature-detection, or re-implementations of HudKit/JuiceKit APIs.",
@@ -253,7 +277,8 @@ export function buildChatPrompt({
       "## Mode: AGENT (edit gameplay via Cursor)",
       `TDD slug: ${slug}. Prefer reading docs/tdds/${slug}/TDD.md and public/gameplay/** yourself.`,
       "Write only under public/gameplay/**. Do not edit public/runtime/**, public/app.js, server/**, or AGENTS.md.",
-      "Keep mount/unmount, HudKit/JuiceKit, full loop (win/lose/restart), graybox primitives.",
+      "Keep mount/unmount, LookKit look, HudKit/juice.js feedback hub, full loop (win/lose/restart), primitive geometry with production presentation.",
+      "Visual requests (mood, colors, lighting, 'make it look better') → edit look.js (LookKit preset/overrides) and set dressing first.",
       "Theme HudKit from TDD mood (`arcade`/`party` vs `liminal`/`muted`/`stealth` or `themeFromPalette`).",
       "Never open files under public/runtime/ — the API index below is the contract; import and trust it.",
       "Match the user language. Keep the reply short after edits.",
@@ -276,7 +301,8 @@ export function buildChatPrompt({
     "",
     "## Mode: AGENT (edit gameplay)",
     `TDD slug: ${slug} (TDD file is read-only this turn).`,
-    "Write only `public/gameplay/**`. Keep mount/unmount, HudKit, JuiceKit, full loop, graybox.",
+    "Write only `public/gameplay/**`. Keep mount/unmount, LookKit, HudKit, juice.js feedback hub, full loop, primitive geometry.",
+    "Visual requests (mood, colors, lighting, 'make it look better') → edit `look.js` (LookKit preset/overrides) and set dressing first.",
     "Theme HudKit from TDD mood (`arcade`/`party` vs `liminal`/`muted`/`stealth` or `themeFromPalette`).",
     "Do not edit `public/runtime/**`, lab UI, `server/**`, or `AGENTS.md`.",
     "Never read `public/runtime/**` — the API index below is the contract; import and trust it (no defensive wrappers).",

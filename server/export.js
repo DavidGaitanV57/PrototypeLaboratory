@@ -146,12 +146,37 @@ mount(canvas, { hudRoot })
 
 /**
  * Resolve lab absolute imports (/runtime/…, /vendor/three/…) for the bundle.
+ * Also resolves Three.js addons (`/vendor/three/examples/jsm/...`, bare `three`,
+ * `three/addons/...`) to the same module instance as the core build.
  */
 function labPathPlugin({ publicRoot, root }) {
-  const threeCandidates = [
-    path.join(root, "node_modules", "three", "build"),
-    path.join(publicRoot, "vendor", "three", "build"),
+  const threeRoots = [
+    path.join(root, "node_modules", "three"),
+    path.join(publicRoot, "vendor", "three"),
   ];
+
+  async function firstExisting(candidates) {
+    for (const candidate of candidates) {
+      try {
+        await fs.access(candidate);
+        return candidate;
+      } catch {
+        /* try next */
+      }
+    }
+    return null;
+  }
+
+  async function resolveThreeSub(sub) {
+    const clean = String(sub || "").replace(/^\/+/, "");
+    const found = await firstExisting([
+      ...threeRoots.map((r) => path.join(r, clean)),
+      // Legacy: basename inside build/
+      ...threeRoots.map((r) => path.join(r, "build", path.basename(clean))),
+    ]);
+    if (found) return { path: found };
+    return { errors: [{ text: `Three.js file not found: ${clean} (npm install in the lab)` }] };
+  }
 
   return {
     name: "plab-lab-paths",
@@ -160,21 +185,18 @@ function labPathPlugin({ publicRoot, root }) {
         path: path.join(publicRoot, args.path.replace(/^\//, "")),
       }));
 
-      build.onResolve({ filter: /^\/vendor\/three\// }, async (args) => {
-        const base = path.basename(args.path);
-        for (const dir of threeCandidates) {
-          const candidate = path.join(dir, base);
-          try {
-            await fs.access(candidate);
-            return { path: candidate };
-          } catch {
-            /* try next */
-          }
-        }
-        return {
-          errors: [{ text: `Three.js file not found: ${base} (npm install in the lab)` }],
-        };
-      });
+      build.onResolve({ filter: /^\/vendor\/three\// }, (args) =>
+        resolveThreeSub(args.path.replace(/^\/vendor\/three\//, "")),
+      );
+
+      // Addons import the bare specifier — map it to the core build so there is one THREE.
+      build.onResolve({ filter: /^three$/ }, () => resolveThreeSub("build/three.module.js"));
+      build.onResolve({ filter: /^three\/addons\// }, (args) =>
+        resolveThreeSub(args.path.replace(/^three\/addons\//, "examples/jsm/")),
+      );
+      build.onResolve({ filter: /^three\/examples\// }, (args) =>
+        resolveThreeSub(args.path.replace(/^three\//, "")),
+      );
     },
   };
 }

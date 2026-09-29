@@ -353,6 +353,42 @@ export async function advisePlayability({ root, tddText = "" }) {
     }
   }
 
+  // Presentation layer (soft) — the kits that make primitive worlds look shipped.
+  if (bundle.hasMain) {
+    if (!/installLook\s*\(/.test(src)) {
+      advice.push({
+        id: "lookkit",
+        severity: "info",
+        message: "Presentation: LookKit is not installed — the game renders flat/unlit (no tone mapping, shadows, bloom, grade).",
+        chatHint: "In main.js after installSceneKit: const look = installLook(engine, LOOK.look) — move mood into look.js (preset + overrides)",
+      });
+    }
+    if (!bundle.files.includes("look.js")) {
+      advice.push({
+        id: "look-bible",
+        severity: "info",
+        message: "Presentation: no look.js Look Bible — palette, mood, HUD theme and audio are scattered or missing.",
+        chatHint: "Create public/gameplay/look.js exporting LOOK { look: { preset }, palette, hudTheme, audio, intro }",
+      });
+    }
+    if (!/createAudio\s*\(|AudioContext/.test(src)) {
+      advice.push({
+        id: "audio",
+        severity: "info",
+        message: "Presentation: the game is silent — no AudioKit sfx/music/ambience.",
+        chatHint: "In juice.js: const audio = createAudio(); audio.music(\"arcade\"); audio.sfx(\"coin\") on events",
+      });
+    }
+    if (!/window\.__plab\s*=/.test(src)) {
+      advice.push({
+        id: "qa-hooks",
+        severity: "info",
+        message: "Visual QA cannot read game state — expose window.__plab = { state, info, restart } and honor window.__PLAB_AUTOPLAY.",
+        chatHint: "In main.js: window.__plab = { get state() { return state; }, get info() { return {...}; }, restart }",
+      });
+    }
+  }
+
   if (!advice.length) {
     advice.push({
       id: "looks-ok",

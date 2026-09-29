@@ -28,6 +28,8 @@ import {
   formatAdviceForChat,
 } from "./playabilityAdvisor.js";
 import { buildRuntimeApiIndex } from "./runtimeIndex.js";
+import { seedTemplateIfEmpty } from "./templates/index.js";
+import { runVisualQa, buildQaFixMessage, qaImagesForChat } from "./visualQa.js";
 import { recordBenchmark } from "./benchmarkStore.js";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -225,7 +227,7 @@ export async function createSession({ root, tddsRoot, slug }) {
     });
   }
 
-  return {
+  const sessionApi = {
     slug,
     get busy() {
       return busy;
@@ -249,7 +251,16 @@ export async function createSession({ root, tddsRoot, slug }) {
         const tdd = await readTdd(tddsRoot, slug);
         const picked = await pickProvider(root, { writeMode: "generate", slug });
         const runtimeIndex = await buildRuntimeApiIndex(root).catch(() => "");
+        const templateSeed = await seedTemplateIfEmpty(root, tdd.text).catch((err) => ({ seeded: false, skipped: err.message }));
+        handlers.onEvent?.({
+          type: "status",
+          message: templateSeed.seeded
+            ? `Starter template: ${templateSeed.id} (${templateSeed.reason})`
+            : `Starter template skipped: ${templateSeed.skipped || "n/a"}`,
+        });
+        if (templateSeed.seeded) handlers.onEvent?.({ type: "template", ...templateSeed });
         const prompt = buildGenerateFinalPrompt({
+          templateSeed,
           slug,
           tddText: tdd.text,
           tddRelPath: tdd.relPath,
@@ -579,5 +590,58 @@ export async function createSession({ root, tddsRoot, slug }) {
       captureCheckpoint(runMeta);
       return checkpointInfo();
     },
+    /**
+     * Visual QA: capture → score → optional auto-polish rounds (Agent chat with the fixes + screenshots).
+     * @param {{ baseUrl: string, autofix?: number, minScore?: number, onEvent?: Function }} handlers
+     */
+    async visualQa(handlers = {}) {
+      if (busy) throw new Error("Session busy");
+      const onEvent = handlers.onEvent;
+      const rounds = Math.max(0, Math.min(3, Number(handlers.autofix ?? process.env.LAB_QA_AUTOFIX ?? 0) || 0));
+      const minScore = Number(handlers.minScore ?? process.env.LAB_QA_MIN_SCORE ?? 7);
+      let tddText = "";
+      try {
+        tddText = (await readTdd(tddsRoot, slug)).text;
+      } catch {
+        /* optional */
+      }
+      busy = true;
+      let report;
+      try {
+        report = await runVisualQa({ root, baseUrl: handlers.baseUrl, tddText, onEvent });
+      } finally {
+        busy = false;
+      }
+      onEvent?.({ type: "qa-report", round: 0, ...slimReport(report) });
+      for (let r = 1; r <= rounds; r += 1) {
+        if (!report?.judge?.judged || report.judge.overall >= minScore) break;
+        onEvent?.({ type: "status", message: `Auto-polish ${r}/${rounds} · ${report.judge.overall}/10 < ${minScore}` });
+        const images = await qaImagesForChat(report);
+        await sessionApi.chat(buildQaFixMessage(report), { mode: "agent", images, onEvent });
+        onEvent?.({ type: "gameplay-changed", reason: "visual-qa" });
+        busy = true;
+        try {
+          report = await runVisualQa({ root, baseUrl: handlers.baseUrl, tddText, onEvent });
+        } finally {
+          busy = false;
+        }
+        onEvent?.({ type: "qa-report", round: r, ...slimReport(report) });
+      }
+      return slimReport(report);
+    },
+  };
+  return sessionApi;
+}
+
+function slimReport(report) {
+  return {
+    digest: report?.digest || "",
+    overall: report?.judge?.judged ? report.judge.overall : null,
+    scores: report?.judge?.scores || null,
+    fixes: report?.judge?.fixes || [],
+    technical: report?.technical || [],
+    images: report?.images || [],
+    captureOk: !!report?.capture?.ok,
+    reason: report?.capture?.ok ? report?.judge?.reason || null : report?.capture?.reason || null,
   };
 }

@@ -39,7 +39,7 @@ else fail("digest missing consts");
 const full = await buildRuntimeApiIndex(ROOT);
 if (!full) fail("no runtime index built");
 else ok(`full index ${full.length} chars`);
-if (full.length > 6000) fail(`full index too large: ${full.length}`);
+if (full.length > 9000) fail(`full index too large: ${full.length}`);
 else ok("full index within budget");
 
 for (const kit of ["HudKit.js", "JuiceKit.js", "Engine.js", "PathKit.js"]) {
@@ -54,7 +54,7 @@ else fail("HudKit surface missing theming");
 const compact = await buildRuntimeApiIndex(ROOT, { compact: true });
 if (compact.length < full.length) ok(`compact index ${compact.length} chars`);
 else fail("compact index should be smaller");
-if (compact.length > 1400) fail(`compact index too large: ${compact.length}`);
+if (compact.length > 1800) fail(`compact index too large: ${compact.length}`);
 else ok("compact index within chat budget");
 
 const hud = await runtimeFileDigest(ROOT, "public/runtime/HudKit.js");

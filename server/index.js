@@ -460,6 +460,14 @@ app.post("/api/sessions/generate-final", async (req, res) => {
 
     send({ type: "ready", entry: "/gameplay/main.js" });
     broadcastReload("generate");
+    if (String(process.env.LAB_VISUAL_QA || "").toLowerCase() === "on") {
+      try {
+        await session.visualQa({ baseUrl: labBaseUrl(), onEvent: (ev) => send(ev) });
+        broadcastReload("visual-qa");
+      } catch (err) {
+        send({ type: "status", message: `Visual QA skipped: ${err.message || err}` });
+      }
+    }
     send({ type: "done", sessionId });
   } catch (err) {
     const message = err.message || String(err);
@@ -586,6 +594,49 @@ app.post("/api/sessions/:id/continue", async (req, res) => {
   } finally {
     res.end();
   }
+});
+
+function labBaseUrl() {
+  const host = HOST === "0.0.0.0" || HOST === "::" ? "127.0.0.1" : HOST;
+  return `http://${host}:${PORT}`;
+}
+
+// Visual QA: headless capture + vision scoring (+ optional auto-polish rounds). Advisory only.
+app.post("/api/sessions/:id/visual-qa", async (req, res) => {
+  const session = sessions.get(req.params.id);
+  const send = sseInit(res);
+  if (!session) {
+    send({ type: "error", message: "Unknown session — Generate Final or Continue first" });
+    return res.end();
+  }
+  try {
+    const autofix = Number(req.body?.autofix ?? 0) || 0;
+    const report = await session.visualQa({
+      baseUrl: labBaseUrl(),
+      autofix,
+      minScore: req.body?.minScore,
+      onEvent: (ev) => send(ev),
+    });
+    if (autofix) broadcastReload("visual-qa");
+    send({ type: "done", qa: { overall: report.overall } });
+  } catch (err) {
+    send({ type: "error", message: err.message || String(err) });
+  } finally {
+    res.end();
+  }
+});
+
+// Screenshots written by visual QA (sessions/qa/<stamp>/shot-N.jpg)
+app.get("/api/qa-shots/:stamp/:file", async (req, res) => {
+  const stamp = String(req.params.stamp || "").replace(/[^0-9A-Za-z_-]/g, "");
+  const file = String(req.params.file || "").replace(/[^0-9A-Za-z_.-]/g, "");
+  if (!stamp || !/^shot-\d+\.jpg$/.test(file)) return res.status(400).end();
+  const abs = path.join(SESSIONS, "qa", stamp, file);
+  if (!isInsideDir(path.join(SESSIONS, "qa"), abs)) return res.status(400).end();
+  res.setHeader("Cache-Control", "no-store");
+  res.sendFile(abs, (err) => {
+    if (err && !res.headersSent) res.status(404).end();
+  });
 });
 
 app.get("/api/sessions/:id/checkpoint", (req, res) => {

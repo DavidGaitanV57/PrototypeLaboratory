@@ -70,6 +70,26 @@ const BASE_CSS = `
   text-shadow: var(--hud-shadow); opacity: var(--hud-panel-opacity);
 }
 .plab-hud__minimap { padding: 6px; }
+.plab-hud__title {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  pointer-events: none; opacity: 0; transition: opacity 0.35s ease; z-index: 15; text-align: center;
+  background: radial-gradient(ellipse at center, rgba(0,0,0,0.35), rgba(0,0,0,0) 65%);
+}
+.plab-hud__title.is-show { opacity: 1; }
+.plab-hud__title h1 {
+  margin: 0; font-size: clamp(40px, 8vw, 96px); line-height: 0.95; color: var(--hud-overlay-title);
+  text-shadow: var(--hud-shadow), 0 6px 30px rgba(0,0,0,0.45); letter-spacing: 1px;
+  transform: scale(0.92); transition: transform 0.6s cubic-bezier(.2,1.4,.4,1);
+}
+.plab-hud__title.is-show h1 { transform: scale(1); }
+.plab-hud__title p { margin: 10px 0 0; font-size: 18px; letter-spacing: 3px; text-transform: uppercase; text-shadow: var(--hud-shadow); }
+.plab-hud__count {
+  position: absolute; top: 34%; left: 50%; transform: translate(-50%, -50%) scale(1); z-index: 16;
+  font-size: 120px; font-weight: 900; color: var(--hud-accent); text-shadow: var(--hud-shadow), 0 8px 40px rgba(0,0,0,0.5);
+  pointer-events: none; opacity: 0;
+}
+.plab-hud__count.is-tick { animation: plabCount 0.9s ease-out forwards; }
+@keyframes plabCount { 0% { opacity: 0; transform: translate(-50%,-50%) scale(2.2); } 20% { opacity: 1; transform: translate(-50%,-50%) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%,-50%) scale(0.8); } }
 .plab-hud__minimap canvas { display: block; border-radius: 6px; background: var(--hud-minimap-bg); }
 `;
 
@@ -446,6 +466,46 @@ export function createHud(root, opts = {}) {
     overlay.classList.remove("is-show");
   }
 
+  const titleEl = document.createElement("div");
+  titleEl.className = "plab-hud__title";
+  titleEl.innerHTML = "<h1></h1><p></p>";
+  shell.appendChild(titleEl);
+  let titleTimer = null;
+  /** Big title card (game name / level name / "FINAL LAP"). Fades after `ms`. */
+  function titleCard(title, subtitle = "", ms = 2200) {
+    titleEl.querySelector("h1").textContent = title;
+    titleEl.querySelector("p").textContent = subtitle;
+    titleEl.classList.add("is-show");
+    clearTimeout(titleTimer);
+    titleTimer = setTimeout(() => titleEl.classList.remove("is-show"), ms);
+  }
+
+  const countEl = document.createElement("div");
+  countEl.className = "plab-hud__count";
+  shell.appendChild(countEl);
+  let countTimers = [];
+  /** 3-2-1-GO countdown; onTick(n) each step, onGo() when it says GO. Returns cancel(). */
+  function countdown(from = 3, { onTick, onGo, go = "GO!" } = {}) {
+    countTimers.forEach(clearTimeout);
+    countTimers = [];
+    const steps = [];
+    for (let n = from; n >= 1; n -= 1) steps.push(String(n));
+    steps.push(go);
+    steps.forEach((label, i) => {
+      countTimers.push(
+        setTimeout(() => {
+          countEl.textContent = label;
+          countEl.classList.remove("is-tick");
+          void countEl.offsetWidth;
+          countEl.classList.add("is-tick");
+          if (i === steps.length - 1) onGo?.();
+          else onTick?.(from - i);
+        }, i * 800),
+      );
+    });
+    return () => countTimers.forEach(clearTimeout);
+  }
+
   /** Re-skin without rebuilding panels (layout/usability unchanged). */
   function setTheme(theme) {
     currentTheme = applyThemeVars(shell, theme);
@@ -454,6 +514,8 @@ export function createHud(root, opts = {}) {
 
   function dispose() {
     clearTimeout(toastTimer);
+    clearTimeout(titleTimer);
+    countTimers.forEach(clearTimeout);
     root.replaceChildren?.();
   }
 
@@ -464,6 +526,8 @@ export function createHud(root, opts = {}) {
     toast,
     showResult,
     hideResult,
+    titleCard,
+    countdown,
     setTheme,
     get theme() {
       return currentTheme;

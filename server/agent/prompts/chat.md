@@ -11,7 +11,8 @@ The user is tuning the **already generated** playable prototype.
 - If soft playability notes are attached, prioritize fixing those loop bugs when the user asks (or when clearly related).
 - Do not edit the TDD unless the user explicitly asked for Sync (separate mode).
 - Do not touch `public/runtime/**` or lab chrome.
-- Keep graybox: items/power-ups = primitive + label/emoji — avoid remote images unless the user asks.
+- Primitive geometry, production presentation: keep LookKit, the feedback hub (`juice.js`) and set dressing; items/power-ups = primitive + glow + label/emoji — no remote images unless the user asks.
+- Look/mood changes go through `look.js`; new events get sight + sound + motion via `juice.js`.
 - Answer in the **same language** the user used — **one language only** for the whole reply. Do not start in Spanish and switch to English (or vice versa). English proper nouns from the TDD (Biolum Ascent, Doodle Jump) are fine inline.
 
 ## Closing summary (required)

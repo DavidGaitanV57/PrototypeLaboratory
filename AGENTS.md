@@ -31,7 +31,7 @@ export async function unmount() { ... }
 
 Entry for a generated build: `public/gameplay/main.js`.
 
-Import runtime helpers from `/runtime/*.js` (Engine, SceneKit, Input, EventBus, Primitives, CameraRig, **HudKit, JuiceKit, PathKit, MinimapKit**). Do not rewrite the runtime.
+Import runtime helpers from `/runtime/*.js` (Engine, SceneKit, **LookKit**, Input, EventBus, Primitives, CameraRig, **HudKit, JuiceKit, FxKit, AudioKit, MaterialKit, WorldKit, PathKit, MinimapKit**). Do not rewrite the runtime. Three.js addons are importable as `three/addons/...` (bundled on export) when a kit does not cover a need.
 
 The lab injects a **Runtime API index** (signatures + returned surface) into Generate Final and Chat. Trust it: do not read runtime sources, and do not wrap kit calls in feature detection — `read_file` on `public/runtime/**` returns that digest, not the source.
 
@@ -40,25 +40,28 @@ When the TDD names Unity systems (NavMesh, NavMeshAgent, Rigidbody, UI Toolkit),
 - Prefer returning `{ sceneKit }` from `mount` when you call `installSceneKit`, so lab chrome can toggle day/night. The runtime also registers the active kit automatically.
 - Keep game HUD away from the **bottom-right** corner — lab chrome (day/night, chat, sync) lives there.
 
-## Playable quality bar (reference-grade mechanics, graybox art)
+## Playable quality bar (reference-grade mechanics, primitive geometry, production presentation)
 
-Generated prototypes must feel like **playable vertical slices** — short games that are fun for 1–2 minutes — using **primitives or compositions of primitives** (boxes, capsules, cylinders, spheres, planes). No remote textures/PBR/glTF required for the core loop. Graybox meshes stay matte; match TDD mood with lights and materials, and **theme HudKit** (`arcade` default; `liminal`/`muted`/`stealth` or `themeFromPalette`) when the TDD asks for quiet or loud chrome.
+Generated prototypes must feel like **playable vertical slices** — short games that are fun for 1–2 minutes and look like a stylized indie game. Shapes are **primitives or compositions of primitives** (boxes, rounded boxes, capsules, cylinders, spheres, cones); everything else ships at production quality through the kits. No remote textures, glTF or image URLs.
 
 Required:
 
-1. Readable fantasy in under 3 seconds (player + world silhouettes with role; mood/palette if TDD defines them).
-2. Full loop: start → core verb → win/lose or round → restart without a full page reload.
-3. Explicit controls (HUD or binding overlay) and delta-time movement.
-4. **`hud.js`** with **HudKit** — live HUD state (score, timer, ammo, mode, laps, etc. as the TDD implies) — never module-title panels. Theme chrome from the TDD when art/atmosphere asks (`arcade` default; `liminal`/`muted`/`stealth` or `themeFromPalette`).
-5. **`juice.js`** with **JuiceKit** — shake, flash, or hit-stop on meaningful events.
-6. NPCs/props when the TDD implies them — distinct meshes, updated every frame.
-7. Genre-appropriate camera and world landmarks (not empty grid alone).
+1. **`look.js` Look Bible written first** (LookKit preset + overrides, palette, HUD theme, music/ambience, intro, wow moment) and **`installLook(engine, LOOK.look)`** on every build.
+2. Readable fantasy in under 3 seconds (animated hero/vehicle silhouettes, mood, palette) in a **dressed world** (landmarks + WorldKit/MaterialKit set dressing).
+3. Full loop: staged intro (camera + title) → core verb → win/lose moment → result → restart without a full page reload.
+4. **`config.js`** with every quantified TDD number; explicit controls; delta-time movement.
+5. **`hud.js`** with **HudKit** — live HUD state, title card, result overlay; themed from the Look Bible — never module-title panels.
+6. **`juice.js`** feedback hub — **JuiceKit + FxKit + AudioKit** behind semantic events; every meaningful event gets sight + sound + motion.
+7. NPCs/props when the TDD implies them — distinct, animated meshes updated every frame.
+8. `window.__plab = { state, info, restart }` + `window.__PLAB_AUTOPLAY` bot so visual QA can capture real play.
 
-Fail examples: lone blue cube on empty plane; mechanics with no win/lose; HUD listing file names.
+Generate Final may seed a **genre starter template** (kart, platformer, firstperson, arena) into an empty `public/gameplay/`. Adapt it to the TDD (look, numbers, fiction, mechanics) — never ship it renamed but unchanged.
 
-## Soft playability advice (never blocks delivery)
+Fail examples: lone cube on empty plane; unlit default renderer; silent game; mechanics with no win/lose; HUD listing file names.
 
-After Generate Final / Chat, the lab may emit **hints** (e.g. kart laps not incrementing). Hints are advisory only — the playable still opens. Fix via Chat; do not fail the build over heuristics.
+## Soft playability advice + visual QA (never block delivery)
+
+After Generate Final / Chat, the lab may emit **hints** (e.g. kart laps not incrementing) and, when enabled, a **visual QA report** (headless screenshots scored by a vision model against a presentation rubric). Both are advisory — the playable still opens. Fix via Chat (or the optional auto-polish pass); do not fail the build over heuristics.
 
 ## Commands
 

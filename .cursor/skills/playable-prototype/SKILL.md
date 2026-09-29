@@ -12,9 +12,11 @@ description: >-
 
 - Write only `public/gameplay/**`. Never edit `public/runtime/**`, lab UI, or `server/`.
 - Entry: `public/gameplay/main.js` with `export async function mount(canvas, { hudRoot })` and `unmount()`.
-- **Required modules:** `hud.js` (HudKit), `juice.js` (JuiceKit), plus mechanic modules as needed.
-- Import helpers from `/runtime/*.js` (Engine, SceneKit, Input, EventBus, Primitives, CameraRig, **HudKit, JuiceKit, PathKit, MinimapKit**). The lab injects a Runtime API index — **never read runtime sources** and never add defensive wrappers around kit calls.
-- Graybox meshes: primitives + matte colors. **Theme HudKit** from TDD mood (`arcade`/`party` vs `liminal`/`muted`/`stealth`, or `themeFromPalette`) — layout stays identical. Items = mesh + short label/emoji — no remote image URLs unless asked.
+- **Required modules:** `look.js` (Look Bible, first), `config.js` (TDD numbers), `hud.js` (HudKit), `juice.js` (JuiceKit + FxKit + AudioKit feedback hub), plus mechanic modules.
+- Import helpers from `/runtime/*.js` (Engine, SceneKit, **LookKit**, Input, EventBus, Primitives, CameraRig, **HudKit, JuiceKit, FxKit, AudioKit, MaterialKit, WorldKit, PathKit, MinimapKit**). The lab injects a Runtime API index — **never read runtime sources** and never add defensive wrappers around kit calls.
+- Primitive geometry, production presentation: `installLook(engine, LOOK.look)` on every build, dressed world, animated heroes (`makeHero` + `animateCharacter`), glow accents, sight + sound + motion on every event. Items = primitive + glow + short label/emoji — no remote image URLs unless asked.
+- If Generate seeded a genre starter (kart / platformer / firstperson / arena), adapt it to the TDD — do not rebuild the plumbing, and do not ship it merely renamed.
+- Expose `window.__plab = { state, info, restart }` and honor `window.__PLAB_AUTOPLAY` so visual QA can drive the game.
 - Keep game HUD off the **bottom-right** (lab chrome lives there). Prefer returning `{ sceneKit }` from `mount`.
 
 ## Build the loop from the TDD
@@ -47,8 +49,8 @@ description: >-
 
 ## Quality bar (vertical slice)
 
-Readable fantasy in &lt;3s, full loop, delta-time movement, **HudKit live HUD**, **JuiceKit feedback**, world landmarks.  
-Fail: lone cube on empty plane; static HUD; HUD listing filenames; no juice on events.
+Readable fantasy in &lt;3s, staged intro + ending, full loop, delta-time movement, **LookKit look**, **HudKit live HUD**, **feedback hub on every event**, dressed world, one wow moment.  
+Fail: lone cube on empty plane; unlit default renderer; silent game; static HUD; HUD listing filenames; no juice on events.
 
 ## Chat iteration
 

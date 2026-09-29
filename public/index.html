@@ -11,6 +11,14 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/vendor/three/build/three.module.js",
+          "three/addons/": "/vendor/three/examples/jsm/"
+        }
+      }
+    </script>
   </head>
   <body>
     <div id="app">
@@ -168,6 +176,12 @@
               </button>
               <button type="button" id="syncBtn" class="play-menu__item play-menu__item--accent" role="menuitem">
                 <span class="play-menu__label">Sync TDD</span>
+              </button>
+              <button type="button" id="qaBtn" class="play-menu__item" role="menuitem" title="Headless screenshots scored by a vision model">
+                <span class="play-menu__label">Visual QA</span>
+              </button>
+              <button type="button" id="qaPolishBtn" class="play-menu__item" role="menuitem" title="Visual QA, then let the agent fix the top issues (up to 2 rounds)">
+                <span class="play-menu__label">Auto-polish</span>
               </button>
               <button type="button" id="exportPlayBtn" class="play-menu__item" role="menuitem" hidden>
                 <span class="play-menu__label">Export</span>

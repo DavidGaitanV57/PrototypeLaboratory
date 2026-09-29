@@ -1,5 +1,6 @@
 /**
- * Editor-like scene kit: procedural sky, grid, graybox ground, day/night.
+ * Scene kit: procedural sky, lights, fog, ground, day/night. Grid + scale blocks only with `{ editor: true }`.
+ * Pair with LookKit (`installLook(engine, { preset })`) for tone mapping, shadows and post.
  */
 import * as THREE from "/vendor/three/build/three.module.js";
 
@@ -102,8 +103,38 @@ function makeSkyDome(THREE, preset) {
   return mesh;
 }
 
+function makeGroundTexture(THREE, color) {
+  const size = 256;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  const base = new THREE.Color(color);
+  g.fillStyle = `#${base.getHexString()}`;
+  g.fillRect(0, 0, size, size);
+  // Soft mottling so large floors never read as flat debug planes
+  for (let i = 0; i < 900; i += 1) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    const r = 2 + Math.random() * 14;
+    const k = (Math.random() - 0.5) * 0.12;
+    const col = base.clone().offsetHSL(0, 0, k);
+    g.globalAlpha = 0.18;
+    g.fillStyle = `#${col.getHexString()}`;
+    g.beginPath();
+    g.arc(x, y, r, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.globalAlpha = 1;
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
 /**
- * Install sky, lights, fog, grid, graybox ground into scene.
+ * Install sky, lights, fog and ground into scene.
+ * opts: { mode, editor (grid + scale blocks), grid, seedBlocks, ground (false to skip), groundColor, groundSize }
  * @returns {{ setMode(mode:"day"|"night"): void, getMode(): "day"|"night", dispose(): void }}
  */
 export function installSceneKit(scene, opts = {}) {
@@ -126,18 +157,23 @@ export function installSceneKit(scene, opts = {}) {
   scene.fog = new THREE.FogExp2(preset.fog, preset.fogDensity);
   scene.background = new THREE.Color(preset.top);
 
+  const editor = opts.editor === true;
   const grid = new THREE.GridHelper(40, 40, 0x5a6a7a, 0x2e3a48);
   grid.position.y = 0.01;
-  scene.add(grid);
+  if (opts.grid ?? editor) scene.add(grid);
 
+  const groundSize = opts.groundSize ?? (editor ? 40 : 240);
+  const groundColor = opts.groundColor ?? 0x6e7570;
+  const groundTex = editor ? null : makeGroundTexture(THREE, groundColor);
+  if (groundTex) groundTex.repeat.set(groundSize / 12, groundSize / 12);
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(40, 40),
-    new THREE.MeshLambertMaterial({ color: 0x6e7570 }),
+    new THREE.PlaneGeometry(groundSize, groundSize),
+    new THREE.MeshStandardMaterial({ color: groundTex ? 0xffffff : groundColor, map: groundTex, roughness: 0.95, metalness: 0 }),
   );
   ground.rotation.x = -Math.PI / 2;
-  ground.receiveShadow = false;
+  ground.receiveShadow = true;
   ground.name = "GrayboxGround";
-  scene.add(ground);
+  if (opts.ground !== false) scene.add(ground);
 
   // Sample graybox blocks for scale reference (can be cleared by gameplay)
   const blocks = new THREE.Group();
@@ -153,7 +189,7 @@ export function installSceneKit(scene, opts = {}) {
     m.position.set(x, y, z);
     blocks.add(m);
   }
-  if (opts.seedBlocks !== false) scene.add(blocks);
+  if (opts.seedBlocks ?? editor) scene.add(blocks);
 
   function applyPreset(p) {
     sky.material.uniforms.top.value.setHex(p.top);
@@ -186,6 +222,7 @@ export function installSceneKit(scene, opts = {}) {
     sky.material.dispose();
     ground.geometry.dispose();
     ground.material.dispose();
+    groundTex?.dispose();
     grid.geometry?.dispose?.();
     blocks.traverse((c) => {
       c.geometry?.dispose?.();

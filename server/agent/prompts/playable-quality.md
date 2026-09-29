@@ -1,37 +1,43 @@
 # Playable quality bar
 
-You are generating a **playable vertical slice** — a short graybox game that feels fun to play for 1–2 minutes, not a debug sandbox.
+You are generating a **playable vertical slice** — a short game that is fun for 1–2 minutes and looks like a *stylized indie game*, not a debug sandbox.
 
-References for mechanical quality: horseback locomotion, web-swing fantasy verbs, interactive mechanisms, arena fight sessions with AI and rematch, action RPG “enter world”, FPS loops with ADS/reload/death/respawn. Achieve that **feel** with primitives; theme HudKit and match lights/materials when the TDD defines mood.
+**Geometry is primitive; presentation is production.** Shapes come from boxes, rounded boxes, capsules, cylinders, spheres, cones and compositions of them. Everything else — lighting, materials, post, particles, sound, camera, UI — is shipped at production quality through the runtime kits.
+
+References for mechanical quality: horseback locomotion, web-swing fantasy verbs, interactive mechanisms, arena fights with AI and rematch, action-RPG "enter world", FPS loops with ADS/reload/death/respawn.
 
 ## Hard requirements
 
-- Compose player/world from boxes, capsules, cylinders, spheres, planes. Matte / simple materials by default.
-- One clear core verb in the first seconds.
-- Win and lose (or round end) + restart path.
-- **Dedicated `hud.js`** using `/runtime/HudKit.js` — live game state on screen, not mechanic module names. Theme from TDD mood (`arcade` default; quieter presets when horror/liminal/minimal UI).
-- **`juice.js`** using `/runtime/JuiceKit.js` — at least shake, flash, or hit-stop on meaningful events.
-- Use `delta` from the runtime clock; cap already applied by Engine.
-- Import `/runtime/Primitives.js` helpers when useful (`makeCharacter`, `makeVehicle`, `makePickup`, `mat`).
-- Import `/runtime/PathKit.js` or `/runtime/MinimapKit.js` when the TDD implies tracks, laps, patrol paths, or minimap.
+- **`look.js` Look Bible first** — preset, palette, HUD theme, music/ambience, intro, wow moment (see generate-final).
+- **LookKit on every build**: `installLook(engine, LOOK.look)` right after SceneKit. Never ship the unlit default renderer.
+- One clear core verb in the first seconds; readable fantasy in < 3 s (silhouette + palette + mood).
+- Win and lose (or round end) + restart without page reload.
+- **`hud.js`** with HudKit — live state, `titleCard` intro, `showResult` outro. Theme from the Look Bible.
+- **`juice.js`** = the feedback hub: JuiceKit (shake/kick/hit-stop/slow-mo/floatText/impact) + FxKit (particles, rings, trails) + AudioKit (sfx, music, ambience). Gameplay calls semantic events (`fb.pickup(pos)`), never raw effects.
+- Every meaningful event has **sight + sound + motion**: e.g. pickup = burst + coin sfx + float text; hit = sparks + hit sfx + shake/hit-stop.
+- Use `delta` from the runtime clock; `juice.filterDelta(dt)` for simulation.
+- Characters: `makeHero` + `animateCharacter` (eyes, walk cycle, squash). Vehicles: `makeVehicle` + `animateVehicle`. Never a lone static capsule.
+- World: landmarks + set dressing (WorldKit trees/rocks/backdrop/clouds/water/grass, MaterialKit procedural textures). Never an empty plane.
 
 ## Visual ceiling (TDD-driven)
 
-| TDD | Look |
+| TDD gives | You deliver |
 |-----|------|
-| Mechanics-only | Minimum graybox |
-| Palette / landmarks | Match with materials, lights, and composed world |
+| Mechanics only | Pick the mood that fits the fantasy (LookKit preset), invent a 5-color palette, dress the world |
+| Palette / mood / art refs | Match them exactly: preset + overrides, palette in look.js, materials, lights, fog, HUD theme |
 
-No remote texture URLs or glTF required for the core loop. Procedural canvas textures are OK when the TDD locks a look.
+Allowed: procedural canvas textures (MaterialKit), toon materials + outlines, glow/HDR emissives for bloom, instanced scatter, Three.js addons via `three/addons/...` when truly needed.
+Avoid: remote images, glTF downloads, PBR texture packs, external fonts.
 
 ## Unity terms in the TDD
 
 Implement web equivalents in JS only:
 
-- NavMesh / NavMeshAgent → grid A* or waypoints + steering (`PathKit` splines optional)
-- Rigidbody / CharacterController → simple velocity/gravity on a pawn
+- NavMesh / NavMeshAgent → grid A*/BFS or waypoints + steering (`PathKit` splines optional)
+- Rigidbody / CharacterController → velocity/gravity on a pawn
 - EventBus → `/runtime/EventBus.js`
 - UI Toolkit → DOM inside `hudRoot` via **HudKit**
-- ScriptableObject config → `const` tuning objects at top of modules
+- ScriptableObject config → `config.js` tuning objects
+- URP Volume (bloom, tonemapping, color adjustments, vignette) → LookKit preset/overrides in `look.js`
 
 Never rename those Unity terms inside the TDD file.
