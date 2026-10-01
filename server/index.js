@@ -24,6 +24,8 @@ import { purgeChatAttachments, pruneSessionAttachDir } from "./chatAttachCleanup
 
 const execFileAsync = promisify(execFile);
 
+import { saveToForge, restoreBench, loadFromForge, persistenceConfigured } from "./forgeState.js";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const PUBLIC = path.join(ROOT, "public");
@@ -423,8 +425,28 @@ app.post("/api/sessions/resume", async (req, res) => {
     await fs.access(path.join(GAMEPLAY, "main.js"));
     const sessionId = randomUUID();
     const session = await createSession({ root: ROOT, tddsRoot: TDDS, slug });
+
+    // Resume used to mean "a fresh conversation over whatever build survived": the chat lives in
+    // memory, so a restart lost every exchange that produced this prototype. Forge keeps it, so it
+    // comes back here. `restorePersistableState` refuses an already-used session, so this can only
+    // ever fill an empty one.
+    let chatRestored = null;
+    if (persistenceConfigured()) {
+      const saved = await loadFromForge({ slug, withFiles: false });
+      if (saved?.hay && saved.chat) {
+        chatRestored = session.restorePersistableState?.(saved.chat) || null;
+        if (chatRestored?.restored) {
+          console.log(`[forge-state] chat restored for "${slug}" · ${chatRestored.messages} message(s)`);
+        }
+      }
+    }
+
     sessions.set(sessionId, session);
-    res.json({ sessionId, slug, entry: "/gameplay/main.js" });
+    res.json({
+      sessionId, slug, entry: "/gameplay/main.js",
+      ...(chatRestored?.restored ? { chatRestored: chatRestored.messages } : {}),
+      ...(session.getCheckpointInfo?.() || {}),
+    });
   } catch {
     res.status(404).json({ error: "No playable build on disk — Generate Final first" });
   }
@@ -468,6 +490,10 @@ app.post("/api/sessions/generate-final", async (req, res) => {
         send({ type: "status", message: `Visual QA skipped: ${err.message || err}` });
       }
     }
+    // The bench changed, so Forge gets the new one. This disk is ephemeral: whatever just got
+    // generated is gone on the next redeploy unless somebody else holds it.
+    await saveToForge({ root: ROOT, slug, chat: session.getPersistableState?.() ?? null, origin: "generate" });
+
     send({ type: "done", sessionId });
   } catch (err) {
     const message = err.message || String(err);
@@ -516,6 +542,15 @@ app.post("/api/sessions/:id/chat", async (req, res) => {
       onEvent: (ev) => send(ev),
     });
     if (mode === "agent" && !outcome?.resumable) broadcastReload("chat");
+
+    // Se guarda en Forge pase lo que pase con los archivos. El chat es lo que hoy NO sobrevive a
+    // un reinicio —vive en memoria—, así que un turno de solo lectura también hay que guardarlo:
+    // es el historial, y perderlo es perder por qué el prototipo quedó como quedó.
+    await saveToForge({
+      root: ROOT, slug: await slugActivo(),
+      chat: session.getPersistableState?.() ?? null, origin: "chat",
+    });
+
     send({
       type: "done",
       mode: outcome?.mode || mode,
@@ -704,6 +739,13 @@ app.post("/api/sessions/:id/sync-tdd", async (req, res) => {
       { onEvent: (ev) => send(ev) },
     );
     send({ type: "synced", ...result });
+
+    // El sync reescribe el TDD en disco, y `docs/tdds/` tampoco sobrevive a un redespliegue.
+    await saveToForge({
+      root: ROOT, slug: await slugActivo(),
+      chat: session.getPersistableState?.() ?? null, origin: "sync",
+    });
+
     send({ type: "done" });
   } catch (err) {
     send({ type: "error", message: err.message || String(err) });
@@ -722,8 +764,17 @@ app.post("/api/workspace/activate", async (req, res) => {
       sessions.clear();
       broadcastReload("workspace");
     }
+    // The bench may be empty because this disk was wiped, not because the project is new. Forge
+    // keeps the state; ask for it before calling the bench empty. `restoreBench` only writes onto
+    // an empty bench, so a bench this instance already filled is never overwritten.
+    let restored = null;
+    if (persistenceConfigured()) {
+      restored = await restoreBench({ root: ROOT, slug: r.slug });
+      if (restored?.restored) broadcastReload("restore");
+    }
+
     const ready = await fs.access(path.join(GAMEPLAY, "main.js")).then(() => true).catch(() => false);
-    res.json({ ok: true, ...r, ready });
+    res.json({ ok: true, ...r, ready, ...(restored?.restored ? { restored: restored.written, savedAt: restored.savedAt } : {}) });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

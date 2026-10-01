@@ -242,6 +242,31 @@ export async function createSession({ root, tddsRoot, slug }) {
     getCheckpointInfo() {
       return checkpointInfo();
     },
+
+    // ── The conversation, so it can outlive this process ────────────────────
+    //
+    // `chatHistory` and `checkpoint` are closures in here, and the sessions that hold them are a
+    // `Map` in index.js. That means the whole exchange with the model dies on restart, and this
+    // instance restarts on every redeploy and every idle shutdown. `resume` does not bring it
+    // back — it opens a fresh session over whatever build survived.
+    //
+    // These two give Forge something to keep and something to hand back. Nothing else reads them.
+    getPersistableState() {
+      return { chatHistory, checkpoint };
+    },
+
+    /**
+     * Put a saved conversation back.
+     *
+     * Only onto an untouched session: overwriting a session that has already said something would
+     * lose the newer exchange and leave a checkpoint that does not match it.
+     */
+    restorePersistableState(state) {
+      if (!state || chatHistory.length || checkpoint) return { restored: false, reason: "session already in use" };
+      if (Array.isArray(state.chatHistory)) chatHistory = state.chatHistory;
+      if (state.checkpoint?.messages?.length) checkpoint = state.checkpoint;
+      return { restored: true, messages: checkpoint?.messages?.length || 0, history: chatHistory.length };
+    },
     async generateFinal(handlers = {}) {
       if (busy) throw new Error("Session busy");
       busy = true;
