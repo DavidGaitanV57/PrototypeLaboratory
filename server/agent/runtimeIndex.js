@@ -29,7 +29,11 @@ const PRIORITY = [
   "PathKit.js",
   "MinimapKit.js",
   "EventBus.js",
+  "AssetKit.js",
 ];
+
+/** Kits only offered when the run opted into them (Generate Prototype with Assets). */
+const OPT_IN = { "AssetKit.js": "withAssets" };
 
 function runtimeDir(root) {
   return path.join(root, "public", "runtime");
@@ -294,14 +298,16 @@ function compactLines(blocks) {
 /**
  * Whole-runtime API index for prompts — replaces per-file reads entirely.
  * @param {string} root
- * @param {{ compact?: boolean }} [opts] compact = names only (chat turns)
+ * @param {{ compact?: boolean, withAssets?: boolean }} [opts] compact = names only (chat turns);
+ *   withAssets = include AssetKit (asset-library builds only)
  * @returns {Promise<string>}
  */
-export async function buildRuntimeApiIndex(root, { compact = false } = {}) {
-  const names = await listRuntimeFiles(root);
+export async function buildRuntimeApiIndex(root, { compact = false, withAssets = false } = {}) {
+  const flags = { withAssets };
+  const names = (await listRuntimeFiles(root)).filter((n) => !OPT_IN[n] || flags[OPT_IN[n]]);
   if (!names.length) return "";
   const fp = await fingerprint(root, names);
-  const key = compact ? "compact" : "full";
+  const key = `${compact ? "compact" : "full"}:${withAssets ? "assets" : "primitives"}`;
   const hit = indexCache.get(key);
   if (hit?.fingerprint === fp) return hit.text;
 

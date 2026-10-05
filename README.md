@@ -14,8 +14,8 @@ Open http://127.0.0.1:3850
 
 1. Select a TDD under `docs/tdds/`
 2. Choose **provider** + **model** (API key required in `.env`)
-3. Press **Generate Final**
-4. Play, Chat, **Sync TDD**, or **Clean project**
+3. Press **Generate Prototype** — or **Generate Prototype with Assets** to build with the 3D models in `public/assets/`
+4. **Play Prototype**, Chat, **Sync TDD**, or **Clean project**
 
 ## Providers
 
@@ -44,6 +44,16 @@ Copy `.env` from `tdd-prototype-lab` or fill `.env.example`. On the Start screen
 | `HudKit` | Themed panels + `titleCard`, `countdown`, `showResult` |
 
 Every generated game starts with a **Look Bible** (`public/gameplay/look.js`) and a feedback hub (`juice.js`).
+
+## Asset library (Generate Prototype with Assets)
+
+Drop any number of `.glb` / `.gltf` models and **material sets** (tiling PBR textures — one folder per set, `<base>_color/_normal/_rough…`, optional `material.json`) into `public/assets/` (subfolders allowed); they are served at `/assets/<path>`. **How to author a pack: [ASSETS.md](ASSETS.md).** The start screen counts them and enables **Generate Prototype with Assets** — the same Generate run, plus:
+
+- a manifest: models from each file's glTF JSON (objects by name, size in metres, animation clips), material sets from folder listings + `material.json` (surfaces, real-world tile size, maps) — binaries are never read into the prompt;
+- `/runtime/AssetKit.js` (`preloadAssets`, `placeAsset`, `cloneNode`, `playClip`, `loadMaterial`, `texturedBox`, `texturedPlane`, `tileUv`) in the runtime API index — offered only in this mode. Material sets resolve through `/assets/library.json`, generated on request;
+- a rule to write `public/gameplay/assets.js` (game role → model, surface role → material id) and fall back to primitives / MaterialKit where the library has nothing fitting.
+
+Chat turns get the library too once the build imports AssetKit. Clean project never touches `public/assets/`; Export copies only the files the build references (serve the export folder over http to load them). Binaries are git-ignored.
 
 ## Genre starters
 
@@ -74,6 +84,7 @@ Needs `playwright-core` (optional dependency, installed by `npm install`; no bro
 - `server/agent/templates/` — genre starter playables
 - `server/agent/visualQa.js` + `public/qa.html` — headless capture + vision scoring
 - `public/gameplay/` — generated playable (wiped by Clean)
+- `public/assets/` — 3D model library for Generate Prototype with Assets (read-only for agents, kept by Clean)
 - `AGENTS.md` + `server/agent/prompts/` — LLM-agnostic agent rules
 - `PRODUCT.md` / `DESIGN.md` — Impeccable Operate UI context
 

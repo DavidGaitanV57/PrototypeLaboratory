@@ -17,7 +17,7 @@ This is a local web lab that reads a V57 Technical Design Document (TDD) and gen
 
 | Mode | Allowed paths | Forbidden |
 |------|---------------|-----------|
-| Generate Final / Chat | `public/gameplay/**` | `public/runtime/**`, `public/index.html`, `public/app.js`, `public/styles.css`, `server/**`, `AGENTS.md` |
+| Generate Final / Chat | `public/gameplay/**` | `public/runtime/**`, `public/assets/**`, `public/index.html`, `public/app.js`, `public/styles.css`, `server/**`, `AGENTS.md` |
 | Sync TDD | `docs/tdds/<slug>/*.md` (active TDD only; not `TDD.v*.md` snaps) | Any other path; lab meta in TDD content |
 
 ## Runtime contract
@@ -40,9 +40,18 @@ When the TDD names Unity systems (NavMesh, NavMeshAgent, Rigidbody, UI Toolkit),
 - Prefer returning `{ sceneKit }` from `mount` when you call `installSceneKit`, so lab chrome can toggle day/night. The runtime also registers the active kit automatically.
 - Keep game HUD away from the **bottom-right** corner — lab chrome (day/night, chat, sync) lives there.
 
+## Asset library (Generate Prototype with Assets)
+
+The start screen has three actions: **Generate Prototype** (primitives), **Generate Prototype with Assets** (same run + the model library) and **Play Prototype**.
+
+- Library: `public/assets/**` — any number of `.glb` / `.gltf` **models** and **material sets** (tiling PBR textures, one folder per set, optional `material.json`), subfolders allowed, served at `/assets/<path>`. Format spec for pack authors: `ASSETS.md`. Read-only for agents; Clean keeps it; binaries are git-ignored.
+- In asset mode the lab injects an **Asset library manifest** (models: file → named objects, size in metres, clips; material sets: id → surfaces, real-world tile size, maps) and adds **`/runtime/AssetKit.js`** to the Runtime API index. Do not read the binaries or `library.json`.
+- Gameplay writes `public/gameplay/assets.js` (game role → `{ file, node, height }`; surface role → material id), preloads only what it uses during the intro, places models with `placeAsset`, builds level surfaces with `texturedBox` / `texturedPlane` / `tileUv` (real-world tiling, one shared material per set), and falls back to primitives / MaterialKit for any role the library lacks or that fails to load. When a file has detail variants of one object, use the lighter one.
+- Library assets replace primitives only where they fit the TDD fiction; the rest of the quality bar below still applies.
+
 ## Playable quality bar (reference-grade mechanics, primitive geometry, production presentation)
 
-Generated prototypes must feel like **playable vertical slices** — short games that are fun for 1–2 minutes and look like a stylized indie game. Shapes are **primitives or compositions of primitives** (boxes, rounded boxes, capsules, cylinders, spheres, cones); everything else ships at production quality through the kits. No remote textures, glTF or image URLs.
+Generated prototypes must feel like **playable vertical slices** — short games that are fun for 1–2 minutes and look like a stylized indie game. Shapes are **primitives or compositions of primitives** (boxes, rounded boxes, capsules, cylinders, spheres, cones) — or, in asset mode only, models and texture sets from the local `public/assets/` library; everything else ships at production quality through the kits. No remote textures, glTF or image URLs.
 
 Required:
 
@@ -75,4 +84,4 @@ Generate Final, Chat, and Sync **require** a configured provider (`CURSOR_API_KE
 
 ## Clean project
 
-Cleaning removes generated gameplay and sessions only. Never delete `docs/tdds/`, `public/runtime/`, or lab UI.
+Cleaning removes generated gameplay and sessions only. Never delete `docs/tdds/`, `public/runtime/`, `public/assets/`, or lab UI.

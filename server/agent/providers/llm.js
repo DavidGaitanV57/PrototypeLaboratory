@@ -472,6 +472,10 @@ export function createLlmProvider({
           return `${digest}\n\n(Runtime sources are not served — import the module and use the exports above.)`;
         }
       }
+      if (/\.(glb|gltf|bin|png|jpe?g|webp|ktx2|hdr|exr|fbx|obj|ogg|mp3|wav)$/i.test(rel)) {
+        servedReads.set(rel, "binary asset — not served.");
+        return `${rel} is a binary asset. Do not read it — the Asset library manifest in your instructions lists its objects and sizes; load it with /runtime/AssetKit.js.`;
+      }
       const body = await fs.readFile(abs, "utf8");
       if (isDocRel(rel) && body.length > TDD_BRIEF_THRESHOLD) {
         servedReads.set(rel, "Section map was returned; use read_section for specific blocks.");

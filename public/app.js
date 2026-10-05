@@ -15,6 +15,8 @@ const pingMenu = document.getElementById("pingMenu");
 const pingMenuTrigger = document.getElementById("pingMenuTrigger");
 const pingMenuPopover = document.getElementById("pingMenuPopover");
 const generateBtn = document.getElementById("generateBtn");
+const generateAssetsBtn = document.getElementById("generateAssetsBtn");
+const assetsHint = document.getElementById("assetsHint");
 const continueBtn = document.getElementById("continueBtn");
 const exportBtn = document.getElementById("exportBtn");
 const cleanBtn = document.getElementById("cleanBtn");
@@ -1712,14 +1714,14 @@ async function loadProviders() {
     providerError.textContent =
       data.missingHint ||
       "No API key configured. Add CURSOR_API_KEY and/or LLM_API_KEY to .env and restart.";
-    generateBtn.disabled = true;
+    syncGenerateButtons();
     setPingBusy(true);
     modelSelect.innerHTML = "";
     providerHint.textContent = "";
     return;
   }
 
-  generateBtn.disabled = false;
+  syncGenerateButtons();
   setPingBusy(false);
   for (const p of data.providers || []) {
     const opt = document.createElement("option");
@@ -2654,21 +2656,49 @@ document.addEventListener("keydown", (e) => {
 pingModelBtn?.addEventListener("click", () => pingSelectedModel());
 pingModelsBtn?.addEventListener("click", () => pingAllSuggestedModels());
 
-generateBtn.addEventListener("click", async () => {
+/** Asset library (public/assets/**) — the third start button needs at least one model or material set. */
+let assetLibrary = { count: 0, objects: 0, materialCount: 0, bytes: 0, dir: "public/assets" };
+const hasAssets = () => Boolean(assetLibrary.count || assetLibrary.materialCount);
+
+function syncGenerateButtons(busy = false) {
+  const off = busy || !providerState.configured;
+  generateBtn.disabled = off;
+  if (generateAssetsBtn) generateAssetsBtn.disabled = off || !hasAssets();
+}
+
+async function refreshAssetLibrary() {
+  try {
+    assetLibrary = await fetch("/api/assets").then((r) => r.json());
+  } catch {
+    assetLibrary = { count: 0, objects: 0, materialCount: 0, bytes: 0, dir: "public/assets" };
+  }
+  if (assetsHint) {
+    const mb = Math.round((assetLibrary.bytes || 0) / 1024 / 1024);
+    assetsHint.textContent = hasAssets()
+      ? `${assetLibrary.count} model file(s) · ${assetLibrary.objects} objects · ${assetLibrary.materialCount || 0} material set(s) · ${mb} MB in ${assetLibrary.dir}/`
+      : `No assets yet — drop .glb/.gltf models or texture sets into ${assetLibrary.dir || "public/assets"}/`;
+  }
+  syncGenerateButtons();
+}
+
+async function runGenerate({ useAssets = false } = {}) {
   const slug = tddSelect.value;
   if (!slug) return alert("Select a TDD");
   if (!providerState.configured) {
     return alert("Configure CURSOR_API_KEY or LLM_API_KEY in .env first.");
   }
+  if (useAssets && !hasAssets()) {
+    return alert(`No assets in ${assetLibrary.dir || "public/assets"}/ — add .glb/.gltf models or texture sets first.`);
+  }
   await persistProviderSelection();
-  generateBtn.disabled = true;
+  syncGenerateButtons(true);
   startLog.hidden = true;
   startLog.textContent = "";
   localStorage.setItem(LAST_SLUG_KEY, slug);
   showWorkOverlay({
-    title: "Generate Final",
+    title: useAssets ? "Generate Prototype with Assets" : "Generate Prototype",
     eyebrow: "Building",
-    status: `${slug} · ${providerSelect.value} / ${selectedModelValue()}`,
+    status: `${slug} · ${providerSelect.value} / ${selectedModelValue()}${useAssets ? ` · ${assetLibrary.count} model file(s), ${assetLibrary.materialCount || 0} material set(s)` : ""}`,
   });
   try {
     let generateFailed = false;
@@ -2678,7 +2708,7 @@ generateBtn.addEventListener("click", async () => {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slug }),
+        body: JSON.stringify({ slug, useAssets }),
       },
       (ev) => {
         if (ev?.type === "error") {
@@ -2726,8 +2756,15 @@ generateBtn.addEventListener("click", async () => {
     showWorkFailure(String(err.message || err));
     alert(err.message || err);
   } finally {
-    generateBtn.disabled = !providerState.configured;
+    syncGenerateButtons();
   }
+}
+
+generateBtn.addEventListener("click", () => runGenerate());
+generateAssetsBtn?.addEventListener("click", () => runGenerate({ useAssets: true }));
+// Models get dropped into public/assets/ while the lab is open — recount when the tab comes back.
+window.addEventListener("focus", () => {
+  if (!generateBtn.disabled) refreshAssetLibrary();
 });
 
 workStopBtn.addEventListener("click", () => cancelActiveWork());
@@ -3316,6 +3353,7 @@ if (tddFijo && [...tddSelect.options].some((o) => o.value === tddFijo)) {
   if (etiqueta && elegido) etiqueta.textContent = `TDD · ${elegido.projectName}`;
 }
 await loadProviders();
+await refreshAssetLibrary();
 await loadBenchmark();
 await refreshContinueBtn();
 try {

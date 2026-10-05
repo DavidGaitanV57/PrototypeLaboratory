@@ -10,3 +10,5 @@ public/gameplay/*
 !public/gameplay/.gitkeep
 *.log
 .DS_Store
+public/assets/*
+!public/assets/README.md

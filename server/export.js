@@ -19,6 +19,8 @@ import {
   isInsideDir,
   resolveExportDestination,
 } from "./security/paths.js";
+import { scanLibrary } from "./agent/assetCatalog.js";
+import { materialLibraryIndex } from "./agent/materialCatalog.js";
 
 async function safeCopyFile(src, dst) {
   try {
@@ -45,6 +47,49 @@ async function countFiles(dir) {
     else if (ent.isFile()) n += 1;
   }
   return n;
+}
+
+/** Gameplay sources as one string — used to tell which library files the build references. */
+async function readGameplaySources(dir) {
+  let out = "";
+  let entries = [];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const ent of entries) {
+    const p = path.join(dir, ent.name);
+    if (ent.isDirectory()) out += await readGameplaySources(p);
+    else if (/\.js$/i.test(ent.name)) out += `\n${await fs.readFile(p, "utf8").catch(() => "")}`;
+  }
+  return out;
+}
+
+/** Copy the asset-library files the build names (by library path) into <dest>/assets/. */
+async function copyReferencedAssets({ root, publicRoot, dest }) {
+  const sources = await readGameplaySources(path.join(publicRoot, "gameplay"));
+  if (!sources.includes("/runtime/AssetKit.js") && !sources.includes("/assets/")) return [];
+  const { models, materials } = await scanLibrary(root);
+  const copied = [];
+  for (const a of models) {
+    if (!sources.includes(a.file)) continue;
+    const ok = await safeCopyFile(path.join(publicRoot, "assets", a.file), path.join(dest, "assets", a.file));
+    if (ok) copied.push(a.file);
+  }
+  // Material sets are named by id ("interior/carpet"); a longer id that contains a shorter one
+  // still matches both, which only copies a few extra textures.
+  const usedSets = materials.filter((m) => sources.includes(`"${m.id}"`) || sources.includes(`'${m.id}'`) || sources.includes(`\`${m.id}\``));
+  for (const m of usedSets) {
+    for (const f of Object.values(m.maps)) {
+      if (await safeCopyFile(path.join(publicRoot, "assets", f), path.join(dest, "assets", f))) copied.push(f);
+    }
+  }
+  if (usedSets.length) {
+    await fs.mkdir(path.join(dest, "assets"), { recursive: true });
+    await fs.writeFile(path.join(dest, "assets", "library.json"), JSON.stringify(materialLibraryIndex(usedSets), null, 2), "utf8");
+  }
+  return copied;
 }
 
 function sanitizeSlug(s) {
@@ -102,9 +147,18 @@ function playerHtml({ title }) {
 `;
 }
 
-function readmeText({ slug }) {
-  return `# ${slug} — playable prototype
+function readmeText({ slug, assets = [] }) {
+  const assetNote = assets.length
+    ? `
+## Models and textures
 
+This build loads ${assets.length} asset file(s) (models, textures) from \`assets/\`. Browsers block those reads from a
+double-clicked file, so serve the folder instead (e.g. \`npx serve .\` or \`python -m http.server\`)
+and open the printed URL. Keep \`assets/\` next to \`index.html\`.
+`
+    : "";
+  return `# ${slug} — playable prototype
+${assetNote}
 This folder is the game only (not Prototype Laboratory).
 
 ## Play
@@ -283,7 +337,6 @@ export async function exportBuild({
   const title = cleanSlug.replace(/[-_]+/g, " ").trim() || "Prototype";
   await fs.writeFile(path.join(dest, "index.html"), playerHtml({ title }), "utf8");
   await fs.writeFile(path.join(dest, "play.css"), playerCss(), "utf8");
-  await fs.writeFile(path.join(dest, "README.md"), readmeText({ slug: cleanSlug }), "utf8");
 
   try {
     await bundlePlayable({
@@ -295,6 +348,14 @@ export async function exportBuild({
     const detail = err?.errors?.map((e) => e.text).filter(Boolean).join("; ") || err?.message || String(err);
     return { ok: false, reason: `Bundle failed: ${detail}` };
   }
+
+  let assets = [];
+  try {
+    assets = await copyReferencedAssets({ root, publicRoot, dest });
+  } catch (err) {
+    return { ok: false, reason: `Asset copy failed: ${err.message}` };
+  }
+  await fs.writeFile(path.join(dest, "README.md"), readmeText({ slug: cleanSlug, assets }), "utf8");
 
   const tddDir = path.join(tddsRoot, cleanSlug);
   const tddOutDir = path.join(dest, "tdd");
@@ -318,9 +379,10 @@ export async function exportBuild({
     filesCopied,
     destination: dest,
     entry: "play.js",
-    open: "Double-click index.html (no server)",
+    open: assets.length ? "Serve the folder (models load over http), then open index.html" : "Double-click index.html (no server)",
+    ...(assets.length ? { assets } : {}),
   };
   await fs.writeFile(path.join(dest, "EXPORT.json"), JSON.stringify(manifest, null, 2), "utf8");
 
-  return { ok: true, destination: dest, filesCopied, kind: "playable-portable" };
+  return { ok: true, destination: dest, filesCopied, kind: "playable-portable", ...(assets.length ? { assets } : {}) };
 }

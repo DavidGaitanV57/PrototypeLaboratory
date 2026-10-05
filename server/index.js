@@ -19,6 +19,8 @@ import {
 import { pingProviderModel, pingProviderModels } from "./agent/providers/ping.js";
 import { initBenchmarkStore, getBenchmarkState, clearBenchmark, recordBenchmark } from "./agent/benchmarkStore.js";
 import { gameplayFingerprint } from "./agent/gameplayEvidence.js";
+import { ASSET_DIR_REL, scanLibrary, scanMaterialSets } from "./agent/assetCatalog.js";
+import { materialLibraryIndex } from "./agent/materialCatalog.js";
 import { assertSafeSlug, isInsideDir } from "./security/paths.js";
 import { purgeChatAttachments, pruneSessionAttachDir } from "./chatAttachCleanup.js";
 
@@ -452,9 +454,56 @@ app.post("/api/sessions/resume", async (req, res) => {
   }
 });
 
+// Material-set index the runtime reads (AssetKit.loadMaterial). Built from the folder on every
+// request so dropped-in textures show up without a restart; exports get a frozen copy.
+app.get("/assets/library.json", async (_req, res) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    res.json(materialLibraryIndex(await scanMaterialSets(ROOT)));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Asset library for Generate Prototype with Assets — files under public/assets/** (served at /assets/).
+app.get("/api/assets", async (_req, res) => {
+  try {
+    const { models: library, materials } = await scanLibrary(ROOT);
+    const models = library.filter((a) => !a.error);
+    res.json({
+      dir: ASSET_DIR_REL,
+      count: models.length,
+      objects: models.reduce((n, a) => n + a.objects.length, 0),
+      materialCount: materials.length,
+      bytes: models.reduce((n, a) => n + a.bytes, 0) + materials.reduce((n, m) => n + m.bytes, 0),
+      files: library.map(({ file, url, bytes, objects, animations, error }) => ({
+        file,
+        url,
+        bytes,
+        objects: objects.map((o) => o.name),
+        animations,
+        ...(error ? { error } : {}),
+      })),
+      materials: materials.map(({ id, name, surfaces, tileSize, maps, sidecar, inferred, warnings }) => ({
+        id,
+        name,
+        surfaces,
+        tileSize,
+        maps: Object.keys(maps),
+        sidecar,
+        inferred,
+        ...(warnings.length ? { warnings } : {}),
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/sessions/generate-final", async (req, res) => {
   const slug = parseSlug(req.body?.slug);
   if (!slug) return res.status(400).json({ error: "slug required" });
+  const useAssets = req.body?.useAssets === true;
 
   const send = sseInit(res);
   const sessionId = randomUUID();
@@ -462,10 +511,11 @@ app.post("/api/sessions/generate-final", async (req, res) => {
     await fs.mkdir(SESSIONS, { recursive: true });
     const session = await createSession({ root: ROOT, tddsRoot: TDDS, slug });
     sessions.set(sessionId, session);
-    send({ type: "session", sessionId, slug });
-    send({ type: "status", message: "Generate Final started" });
+    send({ type: "session", sessionId, slug, useAssets });
+    send({ type: "status", message: useAssets ? "Generate Final (with assets) started" : "Generate Final started" });
 
     await session.generateFinal({
+      useAssets,
       onEvent: (ev) => send(ev),
     });
 

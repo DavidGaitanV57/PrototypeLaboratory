@@ -97,6 +97,28 @@ import { createChaseCamera, createThirdPersonCamera, createIntroOrbit } from "/r
 \`\`\``;
 
 /**
+ * Generate Prototype with Assets — overrides the "primitive geometry" rule for the objects the
+ * library covers. Appended after the compact contracts, followed by the library manifest.
+ */
+const ASSET_CONTRACTS = `## Asset mode (this run uses the asset library)
+
+This build **uses the real assets** in \`public/assets/**\` (manifest below): **models** instead of primitives wherever the library has a fitting object, and **material sets** (tiling PBR textures) on floors, walls, ceilings and ground wherever one fits the fiction. Primitives and MaterialKit still fill the gaps (hero/NPCs if the library has no character, pickups, VFX, surfaces with no fitting set) — style them so they sit next to the assets (LookKit, matching palette).
+
+- Pick models that serve the TDD fiction: landmarks, set dressing, props, obstacles, cover, furniture. Do not drop every object in — choose, then repeat the good ones with variation (rotation, scale ±10%, grouping).
+- Write \`assets.js\` first after \`look.js\`: one table mapping **game roles → { file, node, height }** for models (e.g. \`obstacle: { file: "<file from manifest>", node: "<object name>", height: 1.2 }\`) and **surface roles → material id** (e.g. \`floor: "<material id>"\`, \`wall\`, \`ceiling\`). Gameplay modules read roles from it, never hard-coded paths.
+- Materials: give each surface role a set whose \`surfaces\` include it (\`any\` fits everywhere; \`(guessed)\` = inferred from the name — sanity-check the id). \`await preloadMaterials([...ids])\`, then build level geometry with \`texturedBox(mat, [w, h, d])\` (walls, slabs, pillars) and \`texturedPlane(mat, [w, d], { facing: "up" | "down" })\` (floors / ceilings): one shared material per set, UVs tile at the set's real-world \`tile\` size. For other primitives call \`tileUv(mesh)\` after scaling. Never stretch a texture with \`repeat\` by hand. On load error fall back to a MaterialKit material for that surface.
+- Load only the files you use (each is tens of MB): \`await preloadAssets([...files], { onProgress })\` during the intro, show progress in the HUD title card, then place. Mount must survive a load error: log it and fall back to a primitive for that role so the game still plays.
+- \`placeAsset(file, { node, height, position, rotationY })\` returns a Group seated on the floor and scaled to real-world size — use its \`userData.size\` for colliders (simple boxes/circles in gameplay code, not mesh colliders).
+- When the library has several variants of the same object (e.g. low/high detail), use the lighter one. Sizes in the manifest are before scaling — set \`height\` so every model reads at the scale the game needs.
+- Animated files: \`playClip(obj, asset, "Run")\` and call \`.update(dt)\` every frame.
+- Never copy, rename or write files under \`public/assets/\`, never read the binaries or \`library.json\`, never use any other URL. Unmount: \`disposeAssetClone(group)\` on placed groups.
+
+\`\`\`js
+import { preloadAssets, placeAsset, loadAsset, cloneNode, fitToSize, seatOnFloor, playClip, disposeAssetClone,
+  preloadMaterials, loadMaterial, texturedBox, texturedPlane, tileUv } from "/runtime/AssetKit.js";
+\`\`\``;
+
+/**
  * Short TDD digest for Generate Final — enough fantasy/loop/mechanics list without the full doc.
  * Model should read_file the TDD path for quantified numbers.
  */
@@ -145,10 +167,13 @@ export function buildGenerateFinalPrompt({
   tddRelPath,
   runtime = "llm",
   runtimeIndex = "",
+  /** Asset library manifest — non-empty only for Generate Prototype with Assets. */
+  assetManifest = "",
   verbose = false,
 }) {
   const genreBrief = buildGenreBrief(tddText);
   const tddPath = tddRelPath || `docs/tdds/${slug}/TDD.md`;
+  const assetBlock = assetManifest ? `${ASSET_CONTRACTS}\n\n${assetManifest}` : "";
 
   if (verbose) {
     return [
@@ -163,6 +188,8 @@ export function buildGenerateFinalPrompt({
       genreBrief,
       "",
       pack.generateFinal,
+      "",
+      assetBlock,
       "",
       `## Active TDD slug: ${slug}`,
       `Path: ${tddPath}`,
@@ -179,6 +206,8 @@ export function buildGenerateFinalPrompt({
     "",
     GENERATE_COMPACT_CONTRACTS,
     "",
+    assetBlock,
+    "",
     runtimeIndex,
     "",
     genreBrief,
@@ -193,7 +222,10 @@ export function buildGenerateFinalPrompt({
     "2. `read_section` **every** `Mechanic: …` block the core loop needs, plus art/atmosphere (§8), UI (§9) and input sections. The digest below only lists titles; the quantified rules live in those sections.",
     templateSeed?.seeded
       ? "3. Read the seeded `main.js` + `look.js`, then rewrite `look.js` and `config.js` for this TDD and reshape the mechanic modules — keep the working wiring."
-      : "3. Then **write** `look.js` first, then `config.js`, `main.js`, `hud.js`, `juice.js` and the mechanic modules.",
+      : `3. Then **write** \`look.js\` first, then ${assetBlock ? "`assets.js`, " : ""}\`config.js\`, \`main.js\`, \`hud.js\`, \`juice.js\` and the mechanic modules.`,
+    assetBlock && templateSeed?.seeded
+      ? "   Asset mode: add `assets.js` and swap the template's primitive props/landmarks for library models."
+      : "",
     "4. Never open files under `public/runtime/` — the API index above is the full contract; import and use it as written.",
     "5. Do not re-read anything you already read this run, and do not paste AGENTS.md or prompt packs into tools.",
     "6. Trust the kits: no defensive wrappers, feature-detection, or re-implementations of HudKit/JuiceKit APIs.",

@@ -28,6 +28,11 @@ import {
   formatAdviceForChat,
 } from "./playabilityAdvisor.js";
 import { buildRuntimeApiIndex } from "./runtimeIndex.js";
+import {
+  ASSET_DIR_REL,
+  gameplayUsesAssets,
+  scanLibrary,
+} from "./assetCatalog.js";
 import { seedTemplateIfEmpty } from "./templates/index.js";
 import { runVisualQa, buildQaFixMessage, qaImagesForChat } from "./visualQa.js";
 import { recordBenchmark } from "./benchmarkStore.js";
@@ -275,7 +280,27 @@ export async function createSession({ root, tddsRoot, slug }) {
       try {
         const tdd = await readTdd(tddsRoot, slug);
         const picked = await pickProvider(root, { writeMode: "generate", slug });
-        const runtimeIndex = await buildRuntimeApiIndex(root).catch(() => "");
+        const useAssets = Boolean(handlers.useAssets);
+        const runtimeIndex = await buildRuntimeApiIndex(root, { withAssets: useAssets }).catch(() => "");
+        let assetManifest = "";
+        if (useAssets) {
+          const library = await scanLibrary(root);
+          assetManifest = library.manifest;
+          if (!assetManifest) {
+            throw new Error(`Asset library is empty — add .glb/.gltf models or texture sets under ${ASSET_DIR_REL}/`);
+          }
+          const models = library.models.filter((a) => !a.error);
+          handlers.onEvent?.({
+            type: "status",
+            message: `Asset library: ${models.length} model file(s), ${models.reduce((n, a) => n + a.objects.length, 0)} object(s), ${library.materials.length} material set(s)`,
+          });
+          for (const bad of library.models.filter((a) => a.error)) {
+            handlers.onEvent?.({ type: "status", message: `Asset skipped: ${bad.file} (${bad.error})` });
+          }
+          for (const m of library.materials) {
+            for (const w of m.warnings) handlers.onEvent?.({ type: "status", message: `Material ${m.id}: ${w}` });
+          }
+        }
         const templateSeed = await seedTemplateIfEmpty(root, tdd.text).catch((err) => ({ seeded: false, skipped: err.message }));
         handlers.onEvent?.({
           type: "status",
@@ -293,6 +318,7 @@ export async function createSession({ root, tddsRoot, slug }) {
           pack,
           runtime: picked.kind === "cursor" ? "cursor" : "llm",
           runtimeIndex,
+          assetManifest,
         });
         const result = await runProvider(prompt, {
           writeMode: "generate",
@@ -362,7 +388,14 @@ export async function createSession({ root, tddsRoot, slug }) {
         }
         const writeMode = readOnly ? mode : "chat";
         const picked = await pickProvider(root, { writeMode, slug });
-        const runtimeIndex = await buildRuntimeApiIndex(root, { compact: true }).catch(() => "");
+        const withAssets = await gameplayUsesAssets(root).catch(() => false);
+        if (withAssets) {
+          const manifest = (await scanLibrary(root, { compact: true }).catch(() => ({ manifest: "" }))).manifest;
+          if (manifest) {
+            gameplayContext = `${gameplayContext}\n\n${manifest}\nUse \`/runtime/AssetKit.js\` + the roles table in \`assets.js\`; never write under \`public/assets/\`.`;
+          }
+        }
+        const runtimeIndex = await buildRuntimeApiIndex(root, { compact: true, withAssets }).catch(() => "");
         const prompt = buildChatPrompt({
           slug,
           message: trimmed,
